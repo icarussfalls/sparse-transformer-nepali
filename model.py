@@ -274,11 +274,12 @@ def build_transformer(src_vocab_size: int, tgt_vocab_size: int, src_seq_len: int
     projection_layer = ProjectionLayer(d_model, tgt_vocab_size)
 
     # create the transformers
+    
     transformer = Transformer(encoder, decoder, src_embed, tgt_embed, src_pos, tgt_pos, projection_layer)
 
     # init the params
     for p in transformer.parameters():
         if p.dim() > 1:
-            nn.init.xavier_uniform(p)
+            nn.init.xavier_uniform_(p)
     # xavier uniform (glorot initialization) initializes the weights of neural networks to keep the scale of gradients roughly the same in all layers, help prevent vanishing/exploding gradients
     return transformer

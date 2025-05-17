@@ -191,12 +191,16 @@ def train_model(config):
     print("using device", device)
     if (device == "cuda"):
         print(f'Device name: {torch.cuda.get_device_name(device.index)}')
-        print(f'Devicde memory: {torch.cuda.get_device_properties(device.index).total_memory / 1024 ** 3} GB')
+        print(f'Device memory: {torch.cuda.get_device_properties(device.index).total_memory / 1024 ** 3} GB')
     elif (device == "mps"):
         print(f'Device name: <mps>')
     else:
         print('Note: if you have a GPU, consider using it for training')
-    device = torch.device(device)
+    
+    # for multiple gpu, cudas
+    if torch.cuda.device_count() > 1:
+        print('using', torch.cuda.device_count(), "GPUS!")
+        model = nn.DataParallel(model).to(device)
 
     # lets make sure the weights folder exists
     Path(f"{config['data_source']}_{config['model_folder']}").mkdir(parents=True, exist_ok=True)
