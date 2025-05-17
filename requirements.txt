@@ -1,0 +1,12 @@
+torch>=2.0.0
+torchvision
+torchaudio
+torchmetrics
+datasets
+tokenizers
+tqdm
+tensorboard
+# Optional: for Jupyter notebook support
+#ipython
+# Optional: for Apple Silicon (MPS) support, use torch from PyPI >=1.12
+# If using CUDA, ensure you install the correct torch version for your CUDA version
