@@ -168,19 +168,19 @@ def run_validation(model, validation_ds, tokenizer_src, tokenizer_tgt, max_len, 
         # compute the char error rate
         metric = torchmetrics.CharErrorRate()
         cer = metric(predicted, expected)
-        writer.add_scaler('validation cer', cer, global_step)
+        writer.add_scalar('validation cer', cer, global_step)
         writer.flush()
 
         # compute the word error rate
         metric = torchmetrics.WordErrorRate()
         wer = metric(predicted, expected)
-        writer.add_scaler('validation wer', wer, global_step)
+        writer.add_scalar('validation wer', wer, global_step)
         writer.flush()
 
         # compute the BLEU metric
         metric = torchmetrics.BLEUScore()
         bleu = metric(predicted, expected)
-        writer.add_scaler('validation bleu', bleu, global_step)
+        writer.add_scalar('validation bleu', bleu, global_step)
         writer.flush()
 
 
