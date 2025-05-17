@@ -29,7 +29,7 @@ def greedy_decode(model, source, source_mask, tokenizer_src, tokenizer_tgt, max_
     eos_idx = tokenizer_tgt.token_to_id("[EOS]") 
 
     # precomputing the encoder output and reusing it for each step
-    encoder_output = model.encode(source, source_mask)
+    # encoder_output = model.encode(source, source_mask)
     # initialize the decoder input with sos token
     decoder_input = torch.empty(1,1).fill_(sos_idx).type_as(source).to(device)
 
@@ -41,14 +41,14 @@ def greedy_decode(model, source, source_mask, tokenizer_src, tokenizer_tgt, max_
         decoder_mask = casual_mask(decoder_input.size(1)).type_as(source_mask).to(device)
 
         # calculate output
-        out = model.decode(encoder_output, source_mask, decoder_input, decoder_mask)
+        out = model(source, decoder_input, source_mask, decoder_mask)
 
         # get next token
-        prob = model.project(out[:, -1])
+        prob = out[:, -1]  # (batch, vocab_size)
         _, next_word = torch.max(prob, dim=1)
         decoder_input = torch.cat(
             [
-                decoder_input, torch.empty(1,1).type_as(source).fill_(next_word.item()).to(device)
+                decoder_input, torch.empty(1, 1).type_as(source).fill_(next_word.item()).to(device)
             ],
             dim=1
         )
@@ -266,6 +266,7 @@ def train_model(config):
             optimizer.zero_grad(set_to_none=True)
 
             global_step += 1
+            break # breaking directly to test lol
 
         # run validation at the end of every epochs
         run_validation(model, val_dataloader, tokenizer_src, tokenizer_tgt, config['seq_len'], device, lambda msg: batch_iterator.write(msg), global_step, writer)
