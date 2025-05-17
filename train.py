@@ -204,9 +204,9 @@ def train_model(config):
 
     model = get_model(config, tokenizer_src.get_vocab_size(), tokenizer_tgt.get_vocab_size())
     
-    # if torch.cuda.device_count() > 1 and device == "cuda":
-    #     print("Using", torch.cuda.device_count(), "GPUs!")
-    #     model = nn.DataParallel(model)
+    if torch.cuda.device_count() > 1 and device == "cuda":
+        print("Using", torch.cuda.device_count(), "GPUs!")
+        model = nn.DataParallel(model)
 
     model = model.to(device)
     
@@ -244,9 +244,7 @@ def train_model(config):
             decoder_mask = batch['decoder_mask'].to(device) # (batch, 1, seq_len, seq_len)
 
             # run the tensors through the encoder, decoder, and the projection layer
-            encoder_output = model.encode(encoder_input, encoder_mask)  # (batch, seq_len, d_model)
-            decoder_output = model.decode(encoder_output, encoder_mask, decoder_input, decoder_mask) # (batch, seq_len, d_model)
-            proj_output = model.project(decoder_output) # (batch, seq_len, vocab_size)
+            proj_output = model(encoder_input, decoder_input, encoder_mask, decoder_mask)
 
             # compare the output with the label
             label = batch['label'].to(device) # (batch, seq_len)

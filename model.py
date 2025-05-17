@@ -221,21 +221,35 @@ class Transformer(nn.Module):
         self.tgt_pos = tgt_pos
         self.projection_layer = projection_layer
 
-    def encode(self, src, src_mask):
-        # (batch, seq_len, d_model)
-        src = self.src_embed(src)
+    # def encode(self, src, src_mask):
+    #     # (batch, seq_len, d_model)
+    #     src = self.src_embed(src)
+    #     src = self.src_pos(src)
+    #     return self.encoder(src, src_mask)
+
+    # def decode(self, encoder_output: torch.Tensor, src_mask: torch.Tensor, tgt: torch.Tensor, tgt_mask: torch.Tensor):
+    #     # (batch, seq_len, d_model)
+    #     tgt = self.tgt_embed(tgt)
+    #     tgt = self.tgt_pos(tgt)
+    #     return self.decoder(tgt, encoder_output, src_mask, tgt_mask)
+
+    # def project(self, x):
+    #     # (batch, seq_len, vocab_size)
+    #     return self.projection_layer(x)
+    
+    def forward(self, encoder_input, decoder_input, encoder_mask, decoder_mask):
+        # Encode
+        src = self.src_embed(encoder_input)
         src = self.src_pos(src)
-        return self.encoder(src, src_mask)
-
-    def decode(self, encoder_output: torch.Tensor, src_mask: torch.Tensor, tgt: torch.Tensor, tgt_mask: torch.Tensor):
-        # (batch, seq_len, d_model)
-        tgt = self.tgt_embed(tgt)
+        encoder_output = self.encoder(src, encoder_mask)
+        # Decode
+        tgt = self.tgt_embed(decoder_input)
         tgt = self.tgt_pos(tgt)
-        return self.decoder(tgt, encoder_output, src_mask, tgt_mask)
-
-    def project(self, x):
-        # (batch, seq_len, vocab_size)
-        return self.projection_layer(x)
+        decoder_output = self.decoder(tgt, encoder_output, encoder_mask, decoder_mask)
+        # Project
+        proj_output = self.projection_layer(decoder_output)
+        return proj_output
+        
     
 
 # lets build the full transformers now
