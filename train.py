@@ -204,11 +204,6 @@ def train_model(config):
 
     model = get_model(config, tokenizer_src.get_vocab_size(), tokenizer_tgt.get_vocab_size()).to(device)
     
-    # for multiple gpu, cudas
-    if torch.cuda.device_count() > 1:
-        print('using', torch.cuda.device_count(), "GPUS!")
-        model = nn.DataParallel(model)
-    
     # tensorboard part
     writer = SummaryWriter(config['experiment_name'])
     
