@@ -202,7 +202,13 @@ def train_model(config):
 
     train_dataloader, val_dataloader, tokenizer_src, tokenizer_tgt = get_ds(config)
 
-    model = get_model(config, tokenizer_src.get_vocab_size(), tokenizer_tgt.get_vocab_size()).to(device)
+    model = get_model(config, tokenizer_src.get_vocab_size(), tokenizer_tgt.get_vocab_size())
+    
+    if torch.cuda.device_count() > 1 and device == "cuda":
+        print("Using", torch.cuda.device_count(), "GPUs!")
+        model = nn.DataParallel(model)
+
+    model = model.to(device)
     
     # tensorboard part
     writer = SummaryWriter(config['experiment_name'])
@@ -254,7 +260,7 @@ def train_model(config):
             writer.flush()
 
             # backpropagate the loss
-            loss.backwards()
+            loss.backward()
 
             # update the weights
             optimizer.step()
