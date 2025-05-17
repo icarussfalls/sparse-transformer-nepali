@@ -69,7 +69,7 @@ class MultiHeadAttentionBlock(nn.Module):
     def attention(query, key, value, mask, dropout: nn.Dropout):
         d_k = query.shape[-1]
         # (batch, h, seq_len, d_k) --> (batch, h, seq_len, seq_len)
-        attention_scores = (query @ key.transpose(-2, -1)) // math.sqrt(d_k)
+        attention_scores = (query @ key.transpose(-2, -1)) / math.sqrt(d_k)
 
         if mask is not None:
             # write a very low value (-inf) to the position where mask == 0
@@ -274,7 +274,7 @@ def build_transformer(src_vocab_size: int, tgt_vocab_size: int, src_seq_len: int
     projection_layer = ProjectionLayer(d_model, tgt_vocab_size)
 
     # create the transformers
-    
+
     transformer = Transformer(encoder, decoder, src_embed, tgt_embed, src_pos, tgt_pos, projection_layer)
 
     # init the params
