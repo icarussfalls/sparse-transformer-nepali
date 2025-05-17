@@ -204,9 +204,9 @@ def train_model(config):
 
     model = get_model(config, tokenizer_src.get_vocab_size(), tokenizer_tgt.get_vocab_size())
     
-    if torch.cuda.device_count() > 1 and device == "cuda":
-        print("Using", torch.cuda.device_count(), "GPUs!")
-        model = nn.DataParallel(model)
+    # if torch.cuda.device_count() > 1 and device == "cuda":
+    #     print("Using", torch.cuda.device_count(), "GPUs!")
+    #     model = nn.DataParallel(model)
 
     model = model.to(device)
     
