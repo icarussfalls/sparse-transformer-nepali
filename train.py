@@ -195,11 +195,7 @@ def train_model(config):
         print(f'Device name: <mps>')
     else:
         print('Note: if you have a GPU, consider using it for training')
-    
-    # for multiple gpu, cudas
-    if torch.cuda.device_count() > 1:
-        print('using', torch.cuda.device_count(), "GPUS!")
-        model = nn.DataParallel(model).to(device)
+
 
     # lets make sure the weights folder exists
     Path(f"{config['data_source']}_{config['model_folder']}").mkdir(parents=True, exist_ok=True)
@@ -207,6 +203,11 @@ def train_model(config):
     train_dataloader, val_dataloader, tokenizer_src, tokenizer_tgt = get_ds(config)
 
     model = get_model(config, tokenizer_src.get_vocab_size(), tokenizer_tgt.get_vocab_size()).to(device)
+    
+    # for multiple gpu, cudas
+    if torch.cuda.device_count() > 1:
+        print('using', torch.cuda.device_count(), "GPUS!")
+        model = nn.DataParallel(model)
     
     # tensorboard part
     writer = SummaryWriter(config['experiment_name'])
