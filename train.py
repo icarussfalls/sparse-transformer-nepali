@@ -108,7 +108,7 @@ def get_ds(config):
     # we find the max length to decide seq_len that is large enough to cover most sentences, but not so large that memory is wasted on padding
 
     train_dataloader = DataLoader(train_ds, batch_size=config['batch_size'], shuffle=True)
-    val_dataloader = DataLoader(val_ds, batch_size=config['batch_size'], shuffle=True)
+    val_dataloader = DataLoader(val_ds, batch_size=1, shuffle=True)
     return train_dataloader, val_dataloader, tokenizer_src, tokenizer_tgt
 
 
@@ -204,6 +204,7 @@ def train_model(config):
 
     model = get_model(config, tokenizer_src.get_vocab_size(), tokenizer_tgt.get_vocab_size())
     
+    # added gpu parallel support
     if torch.cuda.device_count() > 1 and device == "cuda":
         print("Using", torch.cuda.device_count(), "GPUs!")
         model = nn.DataParallel(model)
