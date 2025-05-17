@@ -25,8 +25,8 @@ from torch.utils.tensorboard import SummaryWriter
 
 # simple greedy decode
 def greedy_decode(model, source, source_mask, tokenizer_src, tokenizer_tgt, max_len, device):
-    sos_idx = tokenizer_tgt.token_to_ids("[SOS]")
-    eos_idx = tokenizer_tgt.token_to_ids("[EOS]") 
+    sos_idx = tokenizer_tgt.token_to_id("[SOS]")
+    eos_idx = tokenizer_tgt.token_to_id("[EOS]") 
 
     # precomputing the encoder output and reusing it for each step
     encoder_output = model.encode(source, source_mask)
