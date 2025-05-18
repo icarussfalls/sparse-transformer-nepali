@@ -80,16 +80,22 @@ class BilingualDataset(Dataset):
         assert decoder_input.size(0) == self.seq_len
         assert label.size(0) == self.seq_len
 
+        # if idx < 5:
+        #     print(f"IDX: {idx}")
+        #     print(f"SRC: {src_text}")
+        #     print(f"TGT: {tgt_text}")
+        #     print("-" * 40)
+
         return {
             "encoder_input": encoder_input,
             "decoder_input": decoder_input,
             "encoder_mask": (encoder_input != self.pad_token).unsqueeze(0).unsqueeze(0).int(), # (1, 1, seq_len)
-            "decoder_mask": (decoder_input != self.pad_token) & casual_mask(decoder_input.size(0)),
+            "decoder_mask": (decoder_input != self.pad_token) & causal_mask(decoder_input.size(0)),
             "label": label,
             "src_text": src_text,
             "tgt_text": tgt_text
         }
 
-def casual_mask(size):
+def causal_mask(size):
     mask = torch.triu(torch.ones((1, size, size)), diagonal=1).type(torch.int)
     return mask == 0

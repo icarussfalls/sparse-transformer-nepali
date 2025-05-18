@@ -1,5 +1,5 @@
 from model import build_transformer
-from dataset import BilingualDataset, casual_mask
+from dataset import BilingualDataset, causal_mask
 from config import get_config, get_weights_file_path, latest_weight_file_path
 
 import torch
@@ -38,7 +38,7 @@ def greedy_decode(model, source, source_mask, tokenizer_src, tokenizer_tgt, max_
             break
 
         # build mask for target
-        decoder_mask = casual_mask(decoder_input.size(1)).type_as(source_mask).to(device)
+        decoder_mask = causal_mask(decoder_input.size(1)).type_as(source_mask).to(device)
 
         # calculate output
         out = model(source, decoder_input, source_mask, decoder_mask)
@@ -128,7 +128,7 @@ def run_validation(model, validation_ds, tokenizer_src, tokenizer_tgt, max_len, 
 
     try:
         # get a console window width
-        with os.popen('stty_size', 'r') as console:
+        with os.popen('stty size', 'r') as console:
             _, console_width = console.read().split()
             console_width = int(console_width)
 
@@ -156,9 +156,9 @@ def run_validation(model, validation_ds, tokenizer_src, tokenizer_tgt, max_len, 
 
             # print the source, target, and model output
             print_msg('-'*console_width)
-            print_msg(f"{f'source: ' :>12}{source_text}")
-            print_msg(f"{f'target: ' :>12}{expected}")
-            print_msg(f"{f'predicted: ' :>12}{predicted}")
+            print_msg(f"{f'source: ' :>12}{source_texts}")
+            print_msg(f"{f'target: ' :>12}{target_text}")
+            print_msg(f"{f'predicted: ' :>12}{model_out_text}")
 
             if count == num_examples:
                 break
@@ -179,9 +179,15 @@ def run_validation(model, validation_ds, tokenizer_src, tokenizer_tgt, max_len, 
 
         # compute the BLEU metric
         metric = torchmetrics.BLEUScore()
+        # if bleu doesn't works below, use this bleu = metric(predicted, [[ref] for ref in expected])
         bleu = metric(predicted, expected)
         writer.add_scalar('validation bleu', bleu, global_step)
         writer.flush()
+
+        # print the scores to your console/logs
+        print_msg(f"{f'BLEU: ' :>12}{bleu:.4f}")
+        print_msg(f"{f'CER: ' :>12}{cer:.4f}")
+        print_msg(f"{f'WER: ' :>12}{wer:.4f}")
 
 
 def train_model(config):
@@ -266,7 +272,7 @@ def train_model(config):
             optimizer.zero_grad(set_to_none=True)
 
             global_step += 1
-            #break / breaking directly to test lol
+            # break / breaking directly to test lol
 
         # run validation at the end of every epochs
         run_validation(model, val_dataloader, tokenizer_src, tokenizer_tgt, config['seq_len'], device, lambda msg: batch_iterator.write(msg), global_step, writer)
