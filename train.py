@@ -279,7 +279,7 @@ def train_model(config):
         run_validation(model, val_dataloader, tokenizer_src, tokenizer_tgt, config['seq_len'], device, lambda msg: batch_iterator.write(msg), global_step, writer)
 
         # Save the model at the end of every N epochs (e.g., every 5)
-        if (epoch + 1) % 5 == 0 or (epoch + 1) == config['num_epochs']:
+        if (epoch + 1) % 2 == 0 or (epoch + 1) == config['num_epochs']:
             model_filename = get_weights_file_path(config, f"{epoch:02d}")
             torch.save({
                 'epoch': epoch,
