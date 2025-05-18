@@ -275,7 +275,7 @@ def train_model(config):
             writer.flush()
             global_step += 1
 
-        # run validation at the end of every epoch
+        # run validation at the end of every epochs
         run_validation(model, val_dataloader, tokenizer_src, tokenizer_tgt, config['seq_len'], device, lambda msg: batch_iterator.write(msg), global_step, writer)
 
         # Save the model at the end of every N epochs (e.g., every 5)
@@ -287,4 +287,12 @@ def train_model(config):
                 'optimizer_state_dict': optimizer.state_dict(),
                 'global_step': global_step
             }, model_filename)
+
+
+
+
+if __name__ == "__main__":
+    warnings.filterwarnings("ignore")
+    config = get_config()
+    train_model(config)
 
