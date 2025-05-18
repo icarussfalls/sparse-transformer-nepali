@@ -21,6 +21,7 @@ from tokenizers.pre_tokenizers import Whitespace
 
 import torchmetrics
 from torch.utils.tensorboard import SummaryWriter
+from torch.cuda.amp import autocast, GradScaler
 
 
 # simple greedy decode
@@ -239,59 +240,51 @@ def train_model(config):
 
     loss_fn = nn.CrossEntropyLoss(ignore_index=tokenizer_src.token_to_id('[PAD]'), label_smoothing=0.1).to(device)
 
+    scaler = GradScaler() if device == "cuda" else None
+
     for epoch in range(initial_epoch, config['num_epochs']):
         torch.cuda.empty_cache()
         model.train()
         batch_iterator = tqdm(train_dataloader, desc=f'Processing epoch {epoch:02d}')
 
         for batch in batch_iterator:
+            encoder_input = batch['encoder_input'].to(device)
+            decoder_input = batch['decoder_input'].to(device)
+            encoder_mask = batch['encoder_mask'].to(device)
+            decoder_mask = batch['decoder_mask'].to(device)
+            label = batch['label'].to(device)
 
-            encoder_input = batch['encoder_input'].to(device) # (batch, seq_len)
-            decoder_input = batch['decoder_input'].to(device) # (batch, seq_len)
-            encoder_mask = batch['encoder_mask'].to(device) # (batch, 1, 1, seq_len)
-            decoder_mask = batch['decoder_mask'].to(device) # (batch, 1, seq_len, seq_len)
-
-            # run the tensors through the encoder, decoder, and the projection layer
-            proj_output = model(encoder_input, decoder_input, encoder_mask, decoder_mask)
-
-            # compare the output with the label
-            label = batch['label'].to(device) # (batch, seq_len)
-
-            # compute the loss using simple cross-entropy
-            loss = loss_fn(proj_output.view(-1, tokenizer_tgt.get_vocab_size()), label.view(-1))
-            batch_iterator.set_postfix({"loss": f"{loss.item():6.3f}"})
-
-            # log the loss
-            writer.add_scalar('train_loss', loss.item(), global_step)
-            writer.flush()
-
-            # backpropagate the loss
-            loss.backward()
-
-            # update the weights
-            optimizer.step()
             optimizer.zero_grad(set_to_none=True)
 
-            global_step += 1
-            # break / breaking directly to test lol
+            # --- Mixed Precision Training ---
+            if scaler is not None:
+                with autocast():
+                    proj_output = model(encoder_input, decoder_input, encoder_mask, decoder_mask)
+                    loss = loss_fn(proj_output.view(-1, tokenizer_tgt.get_vocab_size()), label.view(-1))
+                scaler.scale(loss).backward()
+                scaler.step(optimizer)
+                scaler.update()
+            else:
+                proj_output = model(encoder_input, decoder_input, encoder_mask, decoder_mask)
+                loss = loss_fn(proj_output.view(-1, tokenizer_tgt.get_vocab_size()), label.view(-1))
+                loss.backward()
+                optimizer.step()
 
-        # run validation at the end of every epochs
+            batch_iterator.set_postfix({"loss": f"{loss.item():6.3f}"})
+            writer.add_scalar('train_loss', loss.item(), global_step)
+            writer.flush()
+            global_step += 1
+
+        # run validation at the end of every epoch
         run_validation(model, val_dataloader, tokenizer_src, tokenizer_tgt, config['seq_len'], device, lambda msg: batch_iterator.write(msg), global_step, writer)
 
-        # Save the model at the end of every epoch
-        model_filename = get_weights_file_path(config, f"{epoch:02d}")
-        torch.save({
-            'epoch': epoch,
-            'model_state_dict': model.state_dict(),
-            'optimizer_state_dict': optimizer.state_dict(),
-            'global_step': global_step
-        }, model_filename)
-
-
-
-
-if __name__ == "__main__":
-    warnings.filterwarnings("ignore")
-    config = get_config()
-    train_model(config)
+        # Save the model at the end of every N epochs (e.g., every 5)
+        if (epoch + 1) % 5 == 0 or (epoch + 1) == config['num_epochs']:
+            model_filename = get_weights_file_path(config, f"{epoch:02d}")
+            torch.save({
+                'epoch': epoch,
+                'model_state_dict': model.state_dict(),
+                'optimizer_state_dict': optimizer.state_dict(),
+                'global_step': global_step
+            }, model_filename)
 
