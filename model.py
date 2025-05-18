@@ -73,7 +73,7 @@ class MultiHeadAttentionBlock(nn.Module):
 
         if mask is not None:
             # write a very low value (-inf) to the position where mask == 0
-            attention_scores.masked_fill_(mask==0, -1e9)
+            attention_scores.masked_fill_(mask == 0, torch.finfo(attention_scores.dtype).min)
         attention_scores = attention_scores.softmax(dim=-1) # (batch, h, seq_len, seq_len) apply softmax
 
         if dropout is not None:
