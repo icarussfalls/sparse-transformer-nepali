@@ -185,10 +185,14 @@ def run_validation(model, validation_ds, tokenizer_src, tokenizer_tgt, max_len, 
         writer.flush()
 
         # compute the BLEU metric
+        # Tokenize by splitting on whitespace
         metric = torchmetrics.BLEUScore()
         # if bleu doesn't works below, use this bleu = metric(predicted, [[ref] for ref in expected])
         # bleu = metric(predicted, expected)
-        bleu = metric(predicted, [[ref] for ref in expected])
+        predicted_tok = [pred.split() for pred in predicted]
+        expected_tok = [[ref.split()] for ref in expected]
+
+        bleu = metric(predicted_tok, expected_tok)
         writer.add_scalar('validation bleu', bleu, global_step)
         writer.flush()
 
