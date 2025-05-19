@@ -145,7 +145,7 @@ class MultiHeadAttentionBlock(nn.Module):
         # 2. Scaled dot-product attention per head
         attn_scores = (Q @ K.transpose(-2, -1)) / math.sqrt(self.d_k)
         if mask is not None:
-            attn_scores = attn_scores.masked_fill(mask == 0, -1e9)
+            attn_scores.masked_fill_(mask == 0, torch.finfo(attn_scores.dtype).min)
         attn_probs = F.softmax(attn_scores, dim=-1)
         attn_probs = self.dropout(attn_probs)
         attn_out = attn_probs @ V  # (B, h, L, d_k)
