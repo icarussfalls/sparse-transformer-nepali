@@ -1,170 +1,98 @@
-# English-Italian Transformer Translation
+# Custom Transformer-Based Neural Machine Translation (English–Nepali)
 
-This repository contains a **Transformer-based sequence-to-sequence model** for English-to-Italian translation, implemented from scratch in PyTorch. The project covers the full pipeline: data loading, tokenization, model definition, training, validation, and inference (with both greedy and beam search decoding).
-
----
-
-## Features
-
-- **Custom Transformer model** (encoder-decoder) in PyTorch
-- **Custom tokenizers** trained on your parallel corpus (using HuggingFace [tokenizers](https://github.com/huggingface/tokenizers))
-- **Training and validation** with metrics: BLEU, Word Error Rate (WER), Character Error Rate (CER)
-- **Greedy and beam search decoding** for inference
-- **Configurable hyperparameters** via `config.py`
-- **Supports CPU, CUDA, and Apple M1 (MPS) devices**
-- **Automatic checkpointing and TensorBoard logging**
-- **Easy extensibility for other language pairs or datasets**
+This repository contains a **fully custom implementation of a Transformer-based neural machine translation system** for English–Nepali, built from scratch in PyTorch. Unlike using pre-built libraries, we developed every core component ourselves—including embeddings, positional encoding, multi-head attention, feed-forward layers, normalization, and the full encoder-decoder stack. The project is designed for both research flexibility and practical experimentation, with a focus on transparency, extensibility, and robust evaluation.
 
 ---
 
-## Project Structure
+## What We Developed & Modified
 
-```
-.
-├── config.py           # Configuration and checkpoint utilities
-├── dataset.py          # Bilingual dataset and preprocessing
-├── ds_raw.jsonl        # Example of raw parallel data (en/it)
-├── model.py            # Transformer model and embeddings
-├── train.py            # Training and validation loop
-├── translate.py        # Inference script (greedy & beam search)
-├── tokenizer_en.json   # Trained English tokenizer
-├── tokenizer_it.json   # Trained Italian tokenizer
-├── weights/            # Model checkpoints
-└── runs/               # TensorBoard logs
-```
+### 1. **Custom Transformer Architecture**
+- **All modules implemented from scratch:**  
+  - InputEmbeddings, PositionalEncoding, MultiHeadAttentionBlock (with optional cross-head attention), FeedForward, LayerNormalization, Encoder/Decoder layers, and the final ProjectionLayer.
+- **Pre-norm residual connections** and careful tensor shape management for stability and clarity.
+- **Flexible configuration:**  
+  - Easily adjust model depth, width, number of heads, dropout, and sequence length via `config.py`.
 
----
+### 2. **Data Handling & Preprocessing**
+- **Custom Dataset class (`dataset.py`):**  
+  - Handles tokenization, padding, truncation, and special token management for both source and target languages.
+  - Supports dynamic sequence length and batch size, and can easily be set to use only a fraction of the dataset for prototyping or debugging.
+- **Tokenizer integration:**  
+  - Plug in your own tokenizers; code is agnostic to tokenizer implementation.
 
-## How It Works
+### 3. **Training & Validation Pipeline**
+- **Efficient training loop (`train.py`):**  
+  - Supports multi-GPU training, mixed precision, and gradient accumulation.
+  - Automatic checkpointing and resume-from-latest functionality.
+  - Batch iterator with progress bar and loss tracking.
+- **Validation and metrics:**  
+  - Computes BLEU (using corpus BLEU for multi-sentence reliability), Character Error Rate (CER), and Word Error Rate (WER).
+  - Handles empty predictions gracefully and logs warnings if the model outputs degenerate results.
+  - All metrics are logged to both TensorBoard and a plain text file (`metrics_log.txt`) for easy tracking and analysis.
 
-### Data Loading & Tokenization
-
-- Loads parallel English-Italian data (e.g., from OPUS Books).
-- Trains or loads a **WordLevel tokenizer** for each language.
-- Tokenizes and pads sentences to a fixed sequence length.
-
-### Model
-
-- Implements a **Transformer encoder-decoder** architecture.
-- Embedding layers, positional encoding, multi-head attention, and feed-forward blocks.
-- Configurable model size (`d_model`), sequence length, and vocabulary size.
-
-### Training
-
-- Uses cross-entropy loss with label smoothing.
-- Supports multi-GPU training with `nn.DataParallel`.
-- Saves checkpoints after each epoch.
-- Logs training/validation loss and metrics to TensorBoard.
-
-### Validation
-
-- Computes BLEU, WER, and CER on validation set.
-- Prints sample translations for qualitative inspection.
-
-### Inference
-
-- `translate.py` script for translating sentences using greedy or beam search decoding.
-- Supports running on CPU, CUDA, or Apple M1 (MPS).
+### 4. **Experiment Management**
+- **Configurable experiments:**  
+  - All hyperparameters and file paths are managed in `config.py` for reproducibility.
+- **Logging:**  
+  - Console, TensorBoard, and file logging for all key metrics and training progress.
+- **Prototyping support:**  
+  - Easily restrict training to a small subset of data for rapid iteration and debugging.
 
 ---
 
-## Setup
+## Usage
 
-1. **Clone the repository:**
+1. **Install dependencies:**
     ```bash
-    git clone https://github.com/yourusername/transformers-en-it.git
-    cd transformers-en-it
+    pip install torch nltk torchmetrics datasets tqdm
     ```
 
-2. **Install dependencies:**
+2. **Configure your experiment:**
+    - Edit `config.py` to set batch size, sequence length, number of epochs, model size, etc.
+
+3. **Train the model:**
     ```bash
-    python3 -m venv .venv
-    source .venv/bin/activate
-    pip install -r requirements.txt
+    python train.py
     ```
-    Required packages include:
-    - torch
-    - datasets
-    - tokenizers
-    - torchmetrics
-    - tensorboard
-    - tqdm
 
-3. **Prepare data:**
-    - Download the OPUS Books English-Italian dataset or another parallel corpus.
-    - Preprocess and format as `ds_raw.jsonl` (see example in repo).
-
-4. **Train tokenizers:**
-    - The code will automatically train and save `tokenizer_en.json` and `tokenizer_it.json` if they do not exist.
+4. **Monitor training:**
+    - Use TensorBoard:  
+      ```bash
+      tensorboard --logdir runs/
+      ```
+    - Or check `metrics_log.txt` for validation metrics.
 
 ---
 
-## Training
+## File Structure
 
-Edit `config.py` to adjust hyperparameters as needed.
-
-Start training:
-```bash
-python train.py
-```
-- Model checkpoints will be saved in `weights/`.
-- TensorBoard logs will be saved in `runs/`.
-
-Monitor training with:
-```bash
-tensorboard --logdir runs/
-```
+- `model.py` — All custom Transformer modules and attention mechanisms.
+- `train.py` — Training loop, validation, metric logging, and checkpointing.
+- `dataset.py` — Custom dataset and preprocessing utilities.
+- `config.py` — Experiment configuration.
+- `metrics_log.txt` — Validation metrics log (auto-generated).
 
 ---
 
-## Inference
+## Notes & Best Practices
 
-Translate a sentence using greedy or beam search:
-```bash
-# Greedy decoding
-python translate.py "I am not a very good student."
-
-# Beam search (beam width 5)
-python translate.py "I am not a very good student." --beam 5
-```
-
----
-
-## Configuration
-
-All hyperparameters and paths are set in `config.py`:
-- `batch_size`, `num_epochs`, `lr`, `seq_len`, `d_model`, etc.
-- `tokenizer_file`: Path to tokenizer files
-- `model_folder`, `experiment_name`: Output directories
+- **Prototyping:**  
+  To debug or iterate quickly, set your data loader to use only a small subset of the dataset (see comments in `train.py` and `dataset.py`).
+- **BLEU Calculation:**  
+  BLEU is computed using corpus BLEU for reliable evaluation across batches.
+- **Extensibility:**  
+  The codebase is modular and well-documented, making it easy to adapt for other language pairs, research ideas, or architectural experiments.
+- **Resource Management:**  
+  Supports multi-GPU and mixed-precision training. Batch size and sequence length can be tuned for your hardware.
 
 ---
 
-## Tips for Better Results
+## References
 
-- Use as much parallel data as possible.
-- Train your tokenizer on the full dataset with a vocab size of 16k–32k.
-- For best results, consider fine-tuning a pretrained model (e.g., MarianMT, mBART).
-- Monitor BLEU and validation loss in TensorBoard.
-- Try to overfit a tiny subset (10–20 pairs) to debug your pipeline.
+- Vaswani et al., ["Attention Is All You Need"](https://arxiv.org/abs/1706.03762)
+- PyTorch documentation: https://pytorch.org/
+- NLTK BLEU: https://www.nltk.org/_modules/nltk/translate/bleu_score.html
 
 ---
 
-## License
-
-This project is for research and educational purposes.  
-Please check the OPUS Books dataset license for data usage terms.
-
----
-
-## Acknowledgements
-
-- [OPUS Project](https://opus.nlpl.eu/)
-- [HuggingFace Tokenizers](https://github.com/huggingface/tokenizers)
-- [PyTorch](https://pytorch.org/)
-
----
-
-## Contact
-
-For questions or contributions, open an issue or pull request on GitHub.
-
+**This project is a foundation for research, learning, and practical neural machine translation. Happy translating!**
