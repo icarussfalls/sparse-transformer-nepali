@@ -33,6 +33,10 @@ class BilingualDataset(Dataset):
         enc_input_tokens = self.tokenizer_src.encode(src_text).ids
         dec_input_tokens = self.tokenizer_tgt.encode(tgt_text).ids
 
+        # truncating the sentences for faster batch sizes
+        enc_input_tokens = enc_input_tokens[:self.seq_len]
+        dec_input_tokens = dec_input_tokens[:self.seq_len]
+
         # add sos, eos, and padding to each sentence
         enc_num_padding_tokens = self.seq_len - len(enc_input_tokens) - 2 # we will add <s> and </s>
         # only add <s> on the label
