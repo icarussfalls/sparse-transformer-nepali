@@ -136,11 +136,13 @@ class MultiHeadAttentionBlock(nn.Module):
 
     def forward(self, q_input, k_input, v_input, mask=None):
         B, L, _ = q_input.size()
+        Bk, Lk, _ = k_input.size()  # Sequence length of key (encoder output)
+        Bv, Lv, _ = v_input.size()  # Sequence length of key (encoder output)
 
         # 1. Linear projections + reshape to (B, h, L, d_k)
         Q = self.w_q(q_input).view(B, L, self.h, self.d_k).transpose(1, 2)
-        K = self.w_k(k_input).view(B, L, self.h, self.d_k).transpose(1, 2)
-        V = self.w_v(v_input).view(B, L, self.h, self.d_k).transpose(1, 2)
+        K = self.w_k(k_input).view(Bk, Lk, self.h, self.d_k).transpose(1, 2)
+        V = self.w_v(v_input).view(Bv, Lv, self.h, self.d_k).transpose(1, 2)
 
         # 2. Scaled dot-product attention per head
         attn_scores = (Q @ K.transpose(-2, -1)) / math.sqrt(self.d_k)
