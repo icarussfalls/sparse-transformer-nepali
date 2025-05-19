@@ -207,7 +207,7 @@ def run_validation(model, validation_ds, tokenizer_src, tokenizer_tgt, max_len, 
 
             smoothie = SmoothingFunction().method4
             # BLEU
-            print('str for blue', ref_norm, pred_norm, type(ref_norm), type(pred_norm))
+            print_msg('str for blue', ref_norm, pred_norm, type(ref_norm), type(pred_norm))
             bleu = sentence_bleu([ref_norm], pred_norm, smoothing_function=smoothie)
 
             # CER & WER
