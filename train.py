@@ -82,7 +82,7 @@ def get_ds(config):
 
     # lets use only 20% of the data
     subset_size = int(0.2 * len(ds_all))
-    ds_raw = ds_raw.select(range(subset_size))
+    ds_raw = ds_all.select(range(subset_size))
     print(f"Using {subset_size} samples out of {len(ds_all)}")
     print(ds_raw[0])
 
