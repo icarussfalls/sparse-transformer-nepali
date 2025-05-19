@@ -83,7 +83,7 @@ def get_ds(config):
     ds_all = load_dataset(f"{config['data_source']}", "default", split='train')
 
     # lets use only 20% of the data
-    subset_size = int(0.2 * len(ds_all))
+    subset_size = int(0.1 * len(ds_all))
     ds_raw = ds_all.select(range(subset_size))
     print(f"Using {subset_size} samples out of {len(ds_all)}")
     print(ds_raw[0])
@@ -312,7 +312,7 @@ def train_model(config):
             writer.add_scalar('train_loss', loss.item(), global_step)
             writer.flush()
             global_step += 1
-            break # break in a step lol to check
+            # break # break in a step lol to check
 
         # run validation at the end of every epochs
         run_validation(model, val_dataloader, tokenizer_src, tokenizer_tgt, config['seq_len'], device, lambda msg: batch_iterator.write(msg), global_step, writer)
