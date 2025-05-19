@@ -6,7 +6,7 @@ def get_config():
         'num_epochs' : 20,
         'lr': 10**-4,
         'seq_len': 256, # 600
-        'd_model' : 256, # 512 original
+        'd_model' : 512, # 512 original
         'data_source': 'sharad461/ne-en-parallel-208k',
         'lang_src': 'en',
         'lang_tgt': 'ne',
