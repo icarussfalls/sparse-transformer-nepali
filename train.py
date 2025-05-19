@@ -192,33 +192,41 @@ def run_validation(model, validation_ds, tokenizer_src, tokenizer_tgt, max_len, 
         # if bleu doesn't works below, use this bleu = metric(predicted, [[ref] for ref in expected])
         
         # bleu = metric(predicted, expected)
-        def normalize(text):
-            # Remove weird quotes, multiple commas, punctuations, extra spaces
-            text = text.replace("“", "").replace("”", "")
-            text = re.sub(r'[,.।]+', ' ', text)  # replace punctuations with space
-            text = re.sub(r'\s+', ' ', text)     # collapse multiple spaces
-            return text.strip()
-        pred_norm = normalize(predicted)
-        ref_norm = normalize(expected)
+        if not predicted or all(len(p.strip()) == 0 for p in predicted):
+            bleu = 0.0
+            cer = 1.0
+            wer = 1.0
+            print_msg("Warning: Empty prediction(s), metrics set to worst values.")
+        else:
+            # Normalization
+            def normalize(text):
+                text = text.replace("“", "").replace("”", "")
+                text = re.sub(r'[,.।]+', ' ', text)
+                text = re.sub(r'\s+', ' ', text)
+                return text.strip()
+            pred_norm = [normalize(p) for p in predicted]
+            ref_norm = [normalize(r) for r in expected]
 
-        pred_tok = pred_norm.split()
-        ref_tok = ref_norm.split()
+            # BLEU
+            metric = torchmetrics.BLEUScore()
+            predicted_tok = pred_norm
+            expected_tok = [[ref] for ref in ref_norm]
+            bleu = metric(predicted_tok, expected_tok)
 
-        smoothie = SmoothingFunction().method4
-        score = sentence_bleu([ref_tok], pred_tok, smoothing_function=smoothie)
-        predicted_tok = predicted
-        expected_tok = [[ref] for ref in expected]
+            # CER & WER
+            metric = torchmetrics.CharErrorRate()
+            cer = metric(pred_norm, ref_norm)
+            metric = torchmetrics.WordErrorRate()
+            wer = metric(pred_norm, ref_norm)
 
-        bleu = metric(predicted_tok, expected_tok)
+        # Logging and printing as before
         writer.add_scalar('validation bleu', bleu, global_step)
+        writer.add_scalar('validation cer', cer, global_step)
+        writer.add_scalar('validation wer', wer, global_step)
         writer.flush()
-
-        # print the scores to your console/logs
         print_msg(f"{f'BLEU: ' :>12}{bleu:.4f}")
         print_msg(f"{f'CER: ' :>12}{cer:.4f}")
         print_msg(f"{f'WER: ' :>12}{wer:.4f}")
-        
-        # --- Log metrics to a file ---
         with open("metrics_log.txt", "a") as f:
             f.write(f"Step {global_step}: BLEU={bleu:.4f}, CER={cer:.4f}, WER={wer:.4f}\n")
 
@@ -305,7 +313,7 @@ def train_model(config):
             writer.add_scalar('train_loss', loss.item(), global_step)
             writer.flush()
             global_step += 1
-            # break # break in a step lol to check
+            break # break in a step lol to check
 
         # run validation at the end of every epochs
         run_validation(model, val_dataloader, tokenizer_src, tokenizer_tgt, config['seq_len'], device, lambda msg: batch_iterator.write(msg), global_step, writer)
