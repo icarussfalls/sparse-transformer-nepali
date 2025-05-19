@@ -1,6 +1,7 @@
 import torch
 import torch.nn as nn
 import math
+import torch.nn.functional as F
 
 # input embeddings are created to convert the original sentences into a vector of 512 dimension
 # vocab size is the number of unique tokens
@@ -106,6 +107,69 @@ class MultiHeadAttentionBlock(nn.Module):
         # (batch, seq_len, d_model) -> (batch, seq_len, d_model)
         return self.w_o(x)
 
+# this below adds cross-attention between head treating head as a token
+class InnerMultiHeadAttentionBlock(nn.Module):
+    def __init__(self, d_model, num_heads, dropout=0.1):
+        super().__init__()
+        assert d_model % num_heads == 0, "d_model must be divisible by num_heads"
+
+        self.d_model = d_model
+        self.h = num_heads
+        self.d_k = d_model // num_heads
+
+        # Linear layers for Q, K, V
+        self.w_q = nn.Linear(d_model, d_model)
+        self.w_k = nn.Linear(d_model, d_model)
+        self.w_v = nn.Linear(d_model, d_model)
+
+        # Output projection
+        self.w_o = nn.Linear(d_model, d_model)
+
+        # Dropout for attention weights
+        self.dropout = nn.Dropout(dropout)
+
+        # Cross-head attention: shared layers
+        self.inter_head_q = nn.Linear(self.d_k, self.d_k)
+        self.inter_head_k = nn.Linear(self.d_k, self.d_k)
+        self.inter_head_v = nn.Linear(self.d_k, self.d_k)
+        self.inter_head_out = nn.Linear(self.d_k, self.d_k)
+
+    def forward(self, q_input, k_input, v_input, mask=None):
+        B, L, _ = q_input.size()
+
+        # 1. Linear projections + reshape to (B, h, L, d_k)
+        Q = self.w_q(q_input).view(B, L, self.h, self.d_k).transpose(1, 2)
+        K = self.w_k(k_input).view(B, L, self.h, self.d_k).transpose(1, 2)
+        V = self.w_v(v_input).view(B, L, self.h, self.d_k).transpose(1, 2)
+
+        # 2. Scaled dot-product attention per head
+        attn_scores = (Q @ K.transpose(-2, -1)) / math.sqrt(self.d_k)
+        if mask is not None:
+            attn_scores = attn_scores.masked_fill(mask == 0, -1e9)
+        attn_probs = F.softmax(attn_scores, dim=-1)
+        attn_probs = self.dropout(attn_probs)
+        attn_out = attn_probs @ V  # (B, h, L, d_k)
+
+        # 3. Inter-head attention: treat each head as a "token"
+        # Transpose to (B, L, h, d_k) for head-wise mixing
+        heads = attn_out.transpose(1, 2)  # (B, L, h, d_k)
+
+        Qh = self.inter_head_q(heads)
+        Kh = self.inter_head_k(heads)
+        Vh = self.inter_head_v(heads)
+
+        # Attention across heads: (B, L, h, d_k) × (B, L, d_k, h) → (B, L, h, h)
+        inter_scores = (Qh @ Kh.transpose(-2, -1)) / math.sqrt(self.d_k)
+        inter_probs = F.softmax(inter_scores, dim=-1)
+        inter_probs = self.dropout(inter_probs)
+        mixed_heads = inter_probs @ Vh  # (B, L, h, d_k)
+
+        # Reshape back to (B, h, L, d_k)
+        mixed_heads = mixed_heads.transpose(1, 2)
+
+        # 4. Concatenate heads and final projection
+        concat = mixed_heads.transpose(1, 2).contiguous().view(B, L, self.d_model)
+        return self.w_o(concat)
 
 # alpha is the learnable parameter initialized to one of shape (features,) which scales the normalized outputs
 # bias is the learnable parameter initialized to zeros of shape (features,) which shifts the normalized outputs

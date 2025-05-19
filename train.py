@@ -158,7 +158,7 @@ def run_validation(model, validation_ds, tokenizer_src, tokenizer_tgt, max_len, 
 
             # print the source, target, and model output
             print_msg('-'*console_width)
-            print_msg(f"{f'source: ' :>12}{source_texts}")
+            print_msg(f"{f'source: ' :>12}{source_text}")
             print_msg(f"{f'target: ' :>12}{target_text}")
             print_msg(f"{f'predicted: ' :>12}{model_out_text}")
 
@@ -182,7 +182,8 @@ def run_validation(model, validation_ds, tokenizer_src, tokenizer_tgt, max_len, 
         # compute the BLEU metric
         metric = torchmetrics.BLEUScore()
         # if bleu doesn't works below, use this bleu = metric(predicted, [[ref] for ref in expected])
-        bleu = metric(predicted, expected)
+        # bleu = metric(predicted, expected)
+        bleu = metric(predicted, [[ref] for ref in expected])
         writer.add_scalar('validation bleu', bleu, global_step)
         writer.flush()
 
