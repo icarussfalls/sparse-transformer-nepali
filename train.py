@@ -200,6 +200,10 @@ def run_validation(model, validation_ds, tokenizer_src, tokenizer_tgt, max_len, 
         print_msg(f"{f'BLEU: ' :>12}{bleu:.4f}")
         print_msg(f"{f'CER: ' :>12}{cer:.4f}")
         print_msg(f"{f'WER: ' :>12}{wer:.4f}")
+        
+        # --- Log metrics to a file ---
+        with open("metrics_log.txt", "a") as f:
+            f.write(f"Step {global_step}: BLEU={bleu:.4f}, CER={cer:.4f}, WER={wer:.4f}\n")
 
 
 def train_model(config):
