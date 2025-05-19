@@ -34,8 +34,8 @@ class BilingualDataset(Dataset):
         dec_input_tokens = self.tokenizer_tgt.encode(tgt_text).ids
 
         # truncating the sentences for faster batch sizes
-        enc_input_tokens = enc_input_tokens[:self.seq_len]
-        dec_input_tokens = dec_input_tokens[:self.seq_len]
+        enc_input_tokens = enc_input_tokens[:self.seq_len - 2]
+        dec_input_tokens = dec_input_tokens[:self.seq_len - 1]
 
         # add sos, eos, and padding to each sentence
         enc_num_padding_tokens = self.seq_len - len(enc_input_tokens) - 2 # we will add <s> and </s>
