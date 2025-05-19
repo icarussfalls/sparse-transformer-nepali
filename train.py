@@ -206,7 +206,7 @@ def run_validation(model, validation_ds, tokenizer_src, tokenizer_tgt, max_len, 
 
             smoothie = SmoothingFunction().method4
             # BLEU
-            score = sentence_bleu([ref_norm], pred_norm, smoothing_function=smoothie)
+            bleu = sentence_bleu([ref_norm], pred_norm, smoothing_function=smoothie)
 
             # CER & WER
             metric = torchmetrics.CharErrorRate()
@@ -215,7 +215,7 @@ def run_validation(model, validation_ds, tokenizer_src, tokenizer_tgt, max_len, 
             wer = metric(pred_norm, ref_norm)
 
         # Logging and printing as before
-        writer.add_scalar('validation bleu', score, global_step)
+        writer.add_scalar('validation bleu', bleu, global_step)
         writer.add_scalar('validation cer', cer, global_step)
         writer.add_scalar('validation wer', wer, global_step)
         writer.flush()
