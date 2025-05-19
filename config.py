@@ -2,11 +2,11 @@ from pathlib import Path
 
 def get_config():
     return {
-        'batch_size': 32,
+        'batch_size': 64,
         'num_epochs' : 20,
         'lr': 10**-4,
-        'seq_len': 256, # 600
-        'd_model' : 512, # 512 original
+        'seq_len': 300, # 600
+        'd_model' : 256, # 512 original
         'data_source': 'sharad461/ne-en-parallel-208k',
         'lang_src': 'en',
         'lang_tgt': 'ne',
