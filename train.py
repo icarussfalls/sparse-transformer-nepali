@@ -201,6 +201,7 @@ def run_validation(model, validation_ds, tokenizer_src, tokenizer_tgt, max_len, 
             # Normalization
             def normalize(text):
                 return text.replace("“", "").replace("”", "").replace(",", "").replace(".", "").replace("।", "").strip()
+            
             pred_norm = [normalize(p) for p in predicted]
             ref_norm = [normalize(r) for r in expected]
 
@@ -309,7 +310,7 @@ def train_model(config):
             writer.add_scalar('train_loss', loss.item(), global_step)
             writer.flush()
             global_step += 1
-            # break # break in a step lol to check
+            break # break in a step lol to check
 
         # run validation at the end of every epochs
         run_validation(model, val_dataloader, tokenizer_src, tokenizer_tgt, config['seq_len'], device, lambda msg: batch_iterator.write(msg), global_step, writer)
