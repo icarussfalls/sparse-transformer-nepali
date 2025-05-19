@@ -19,7 +19,7 @@ from tokenizers import Tokenizer
 from tokenizers.models import WordLevel
 from tokenizers.trainers import WordLevelTrainer
 from tokenizers.pre_tokenizers import Whitespace
-from nltk.translate.bleu_score import sentence_bleu, SmoothingFunction
+from nltk.translate.bleu_score import corpus_bleu, SmoothingFunction
 
 import torchmetrics
 from torch.utils.tensorboard import SummaryWriter
@@ -188,7 +188,7 @@ def run_validation(model, validation_ds, tokenizer_src, tokenizer_tgt, max_len, 
 
         # compute the BLEU metric
         # Tokenize by splitting on whitespace
-        metric = torchmetrics.BLEUScore()
+        # metric = torchmetrics.BLEUScore()
         # if bleu doesn't works below, use this bleu = metric(predicted, [[ref] for ref in expected])
         
         # bleu = metric(predicted, expected)
@@ -201,14 +201,16 @@ def run_validation(model, validation_ds, tokenizer_src, tokenizer_tgt, max_len, 
             # Normalization
             def normalize(text):
                 return text.replace("“", "").replace("”", "").replace(",", "").replace(".", "").replace("।", "").strip()
-            
+
             pred_norm = [normalize(p) for p in predicted]
             ref_norm = [normalize(r) for r in expected]
 
+            # Tokenize each sentence
+            pred_tok = [p.split() for p in pred_norm]
+            ref_tok = [[r.split()] for r in ref_norm]  # Each reference must be a list of references
+
             smoothie = SmoothingFunction().method4
-            # BLEU
-            print_msg('str for blue', ref_norm, pred_norm, type(ref_norm), type(pred_norm))
-            bleu = sentence_bleu([ref_norm], pred_norm, smoothing_function=smoothie)
+            bleu = corpus_bleu(ref_tok, pred_tok, smoothing_function=smoothie)
 
             # CER & WER
             metric = torchmetrics.CharErrorRate()
