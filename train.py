@@ -200,18 +200,13 @@ def run_validation(model, validation_ds, tokenizer_src, tokenizer_tgt, max_len, 
         else:
             # Normalization
             def normalize(text):
-                text = text.replace("“", "").replace("”", "")
-                text = re.sub(r'[,.।]+', ' ', text)
-                text = re.sub(r'\s+', ' ', text)
-                return text.strip()
+                return text.replace("“", "").replace("”", "").replace(",", "").replace(".", "").replace("।", "").strip()
             pred_norm = [normalize(p) for p in predicted]
             ref_norm = [normalize(r) for r in expected]
 
+            smoothie = SmoothingFunction().method4
             # BLEU
-            metric = torchmetrics.BLEUScore()
-            predicted_tok = pred_norm
-            expected_tok = [[ref] for ref in ref_norm]
-            bleu = metric(predicted_tok, expected_tok)
+            score = sentence_bleu([ref_norm], pred_norm, smoothing_function=smoothie)
 
             # CER & WER
             metric = torchmetrics.CharErrorRate()
@@ -313,7 +308,7 @@ def train_model(config):
             writer.add_scalar('train_loss', loss.item(), global_step)
             writer.flush()
             global_step += 1
-            # break # break in a step lol to check
+            break # break in a step lol to check
 
         # run validation at the end of every epochs
         run_validation(model, val_dataloader, tokenizer_src, tokenizer_tgt, config['seq_len'], device, lambda msg: batch_iterator.write(msg), global_step, writer)
