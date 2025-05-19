@@ -78,12 +78,12 @@ def get_or_build_tokenizer(config, ds, lang):
 
 def get_ds(config):
     # the data only has train split so
-    ds_raw = load_dataset(f"{config['data_source']}", "default", split='train')
+    ds_all = load_dataset(f"{config['data_source']}", "default", split='train')
 
     # lets use only 20% of the data
-    subset_size = int(0.2 * len(ds_raw))
+    subset_size = int(0.2 * len(ds_all))
     ds_raw = ds_raw.select(range(subset_size))
-    print(f"Using {subset_size} samples out of {len(ds_raw)}")
+    print(f"Using {subset_size} samples out of {len(ds_all)}")
     print(ds_raw[0])
 
     # build the tokenizers
