@@ -2,6 +2,7 @@ import torch
 import torch.nn as nn
 import math
 import torch.nn.functional as F
+from nltk.translate.bleu_score import sentence_bleu, SmoothingFunction
 
 # input embeddings are created to convert the original sentences into a vector of 512 dimension
 # vocab size is the number of unique tokens

@@ -11,6 +11,7 @@ import warnings
 from tqdm import tqdm
 import os
 from pathlib import Path
+import re
 
 # Huggingface datasets and tokenizers
 from datasets import load_dataset
@@ -18,6 +19,7 @@ from tokenizers import Tokenizer
 from tokenizers.models import WordLevel
 from tokenizers.trainers import WordLevelTrainer
 from tokenizers.pre_tokenizers import Whitespace
+from nltk.translate.bleu_score import sentence_bleu, SmoothingFunction
 
 import torchmetrics
 from torch.utils.tensorboard import SummaryWriter
@@ -188,9 +190,24 @@ def run_validation(model, validation_ds, tokenizer_src, tokenizer_tgt, max_len, 
         # Tokenize by splitting on whitespace
         metric = torchmetrics.BLEUScore()
         # if bleu doesn't works below, use this bleu = metric(predicted, [[ref] for ref in expected])
+        
         # bleu = metric(predicted, expected)
-        predicted_tok = [pred.split() for pred in predicted]
-        expected_tok = [[ref.split()] for ref in expected]
+        def normalize(text):
+            # Remove weird quotes, multiple commas, punctuations, extra spaces
+            text = text.replace("“", "").replace("”", "")
+            text = re.sub(r'[,.।]+', ' ', text)  # replace punctuations with space
+            text = re.sub(r'\s+', ' ', text)     # collapse multiple spaces
+            return text.strip()
+        pred_norm = normalize(predicted)
+        ref_norm = normalize(expected)
+
+        pred_tok = pred_norm.split()
+        ref_tok = ref_norm.split()
+
+        smoothie = SmoothingFunction().method4
+        score = sentence_bleu([ref_tok], pred_tok, smoothing_function=smoothie)
+        predicted_tok = predicted
+        expected_tok = [[ref] for ref in expected]
 
         bleu = metric(predicted_tok, expected_tok)
         writer.add_scalar('validation bleu', bleu, global_step)
