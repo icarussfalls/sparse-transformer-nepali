@@ -135,7 +135,11 @@ class MultiHeadAttentionBlock(nn.Module):
         self.inter_head_v = nn.Linear(self.d_k, self.d_k)
         self.inter_head_out = nn.Linear(self.d_k, self.d_k)
 
+        # LayerNorm for residuals
+        self.norm1 = LayerNormalization(d_model)
+
     def forward(self, q_input, k_input, v_input, mask=None):
+        residual = q_input
         B, L, _ = q_input.size()
         Bk, Lk, _ = k_input.size()  # Sequence length of key (encoder output)
         Bv, Lv, _ = v_input.size()  # Sequence length of key (encoder output)
@@ -172,7 +176,11 @@ class MultiHeadAttentionBlock(nn.Module):
 
         # 4. Concatenate heads and final projection
         concat = mixed_heads.transpose(1, 2).contiguous().view(B, L, self.d_model)
-        return self.w_o(concat)
+        output = self.w_o(concat)
+
+        # 5. Residual + LayerNorm (Post-Norm)
+        out1 = self.norm1(output + residual)
+        return out1
 
 # alpha is the learnable parameter initialized to one of shape (features,) which scales the normalized outputs
 # bias is the learnable parameter initialized to zeros of shape (features,) which shifts the normalized outputs

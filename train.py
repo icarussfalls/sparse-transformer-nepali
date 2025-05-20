@@ -232,7 +232,7 @@ def run_validation(model, validation_ds, tokenizer_src, tokenizer_tgt, max_len, 
 
 def train_model(config):
     # lets define the device first
-    device = "cuda" if torch.cuda.is_available() else "mps" if torch.has_mps or torch.backends.mps.is_available() else "cpu"
+    device = "cuda" if torch.cuda.is_available() else "mps" if getattr(torch.backends, "mps", None) and torch.backends.mps.is_available() else "cpu"
     print("using device", device)
     if (device == "cuda"):
         print(f'Device name: {torch.cuda.get_device_name(device.index)}')
@@ -269,8 +269,14 @@ def train_model(config):
     model_filename = latest_weight_file_path(config) if preload == 'latest' else get_weights_file_path(config, preload) if preload else None
     if model_filename:
         print(f'Preloading model {model_filename}') 
-        state = torch.load(model_filename)
-        model.load_state_dict(state['model_state_dict'])
+        state = torch.load(model_filename, map_location=device)
+        
+        from collections import OrderedDict
+        new_state_dict = OrderedDict()
+        for k, v in state['model_state_dict'].items():
+            name = k[7:] if k.startswith('module.') else k  # remove 'module.' if it exists
+            new_state_dict[name] = v
+        model.load_state_dict(new_state_dict)
         initial_epoch = state['epoch'] + 1
         global_step = state['global_step']
     else:

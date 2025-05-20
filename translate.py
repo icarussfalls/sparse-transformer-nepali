@@ -28,7 +28,7 @@ def translate(sentence: str):
         new_state_dict[name] = v
 
     model.load_state_dict(new_state_dict)
-    # model.load_state_dict(state['model_state_dict']) # this returns the error since the model was trained on dataparallel on cuda
+    # model.load_state_dict(state['model_state_dict'], strict=False) # this returns the error since the model was trained on dataparallel on cuda
 
     # if the sentence is the number, use it as an index to the test set
     label = ""
@@ -39,7 +39,8 @@ def translate(sentence: str):
         sentence = ds[id]['src_text']
         label = ds[id]['tgt_text']
     
-    seq_len = config['seq_len']
+    # seq_len = config['seq_len']
+    seq_len = 256  # hardcoding exactly with what the model was initialized with
 
     # translate the sentence
     model.eval()
