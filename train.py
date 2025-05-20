@@ -82,7 +82,7 @@ def get_ds(config):
     # the data only has train split so
     ds_all = load_dataset(f"{config['data_source']}", "default", split='train')
 
-    # lets use only 20% of the data
+    # lets use only 10% of the data
     subset_size = int(0.1 * len(ds_all))
     ds_raw = ds_all.select(range(subset_size))
     print(f"Using {subset_size} samples out of {len(ds_all)}")

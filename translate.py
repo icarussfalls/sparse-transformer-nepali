@@ -13,8 +13,8 @@ def translate(sentence: str):
     print("Using device ", device)
 
     config = get_config()
-    tokenizer_src = Tokenizer.from_file(str(Path(config['tokenizer_file'].format(config['lang_src']))))
-    tokenizer_tgt = Tokenizer.from_file(str(Path(config['tokenizer_file'].format(config['lang_tgt']))))
+    tokenizer_src = Tokenizer.from_file(config['tokenizer_file'].format(config['lang_src']))
+    tokenizer_tgt = Tokenizer.from_file(config['tokenizer_file'].format(config['lang_tgt']))
     
     model = build_transformer(tokenizer_src.get_vocab_size(), tokenizer_tgt.get_vocab_size(), config['seq_len'], config['seq_len'], d_model=config['d_model']).to(device)
 
@@ -28,7 +28,7 @@ def translate(sentence: str):
         new_state_dict[name] = v
 
     model.load_state_dict(new_state_dict)
-    #model.load_state_dict(state['model_state_dict']) # this returns the error since the model was trained on dataparallel on cuda
+    # model.load_state_dict(state['model_state_dict']) # this returns the error since the model was trained on dataparallel on cuda
 
     # if the sentence is the number, use it as an index to the test set
     label = ""
@@ -46,15 +46,14 @@ def translate(sentence: str):
     with torch.no_grad():
         # same process we used in validation
         source = tokenizer_src.encode(sentence)
-        source = torch.cat(
-            [
+        
+        token_ids = source.ids[:seq_len - 2]  # truncate long input
+        source = torch.cat([
             torch.tensor([tokenizer_src.token_to_id('[SOS]')], dtype=torch.int64),
-            torch.tensor(source.ids, dtype=torch.int64),
+            torch.tensor(token_ids, dtype=torch.int64),
             torch.tensor([tokenizer_src.token_to_id('[EOS]')], dtype=torch.int64),
-            torch.tensor([tokenizer_src.token_to_id('[PAD]')] * (seq_len - len(source.ids) - 2), dtype=torch.int64)
-            ],
-        dim=0
-        ).to(device)
+            torch.tensor([tokenizer_src.token_to_id('[PAD]')] * (seq_len - len(token_ids) - 2), dtype=torch.int64)
+        ], dim=0).to(device)
 
         source_mask = (source != tokenizer_src.token_to_id('[PAD]')).unsqueeze(0).unsqueeze(0).int().to(device)
         
