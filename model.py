@@ -49,65 +49,65 @@ class PositionalEncoding(nn.Module):
         return self.dropout(x)
 
 
-d_k is the dimension of the vector processed by the each head == d_model // h
-w_q, w_k, w_v, w_o are linear layers that project the input vectors to queries, keys, values, and outputs resp.
+# d_k is the dimension of the vector processed by the each head == d_model // h
+# w_q, w_k, w_v, w_o are linear layers that project the input vectors to queries, keys, values, and outputs resp.
 
-class MultiHeadAttentionBlock(nn.Module):
-    def __init__(self, d_model: int, h: int, dropout: float) -> None:
-        super().__init__()
+# class MultiHeadAttentionBlock(nn.Module):
+#     def __init__(self, d_model: int, h: int, dropout: float) -> None:
+#         super().__init__()
 
-        self.d_model = d_model # embedding vector size
-        self.h = h # number of heads
-        # making sure d_model is divisible by h
-        assert d_model % h == 0, "d_model is not divisible by h"
+#         self.d_model = d_model # embedding vector size
+#         self.h = h # number of heads
+#         # making sure d_model is divisible by h
+#         assert d_model % h == 0, "d_model is not divisible by h"
 
-        self.d_k = d_model // h # dimension of the vector seen by each head
-        self.w_q = nn.Linear(d_model, d_model, bias=False) # Wq
-        self.w_k = nn.Linear(d_model, d_model, bias=False) # Wk
-        self.w_v = nn.Linear(d_model, d_model, bias=False) # Wv
-        self.w_o = nn.Linear(d_model, d_model, bias=False) # Wo
-        self.dropout = nn.Dropout(dropout)
+#         self.d_k = d_model // h # dimension of the vector seen by each head
+#         self.w_q = nn.Linear(d_model, d_model, bias=False) # Wq
+#         self.w_k = nn.Linear(d_model, d_model, bias=False) # Wk
+#         self.w_v = nn.Linear(d_model, d_model, bias=False) # Wv
+#         self.w_o = nn.Linear(d_model, d_model, bias=False) # Wo
+#         self.dropout = nn.Dropout(dropout)
 
-    @staticmethod
-    def attention(query, key, value, mask, dropout: nn.Dropout):
-        d_k = query.shape[-1]
-        # (batch, h, seq_len, d_k) --> (batch, h, seq_len, seq_len)
-        attention_scores = (query @ key.transpose(-2, -1)) / math.sqrt(d_k)
+#     @staticmethod
+#     def attention(query, key, value, mask, dropout: nn.Dropout):
+#         d_k = query.shape[-1]
+#         # (batch, h, seq_len, d_k) --> (batch, h, seq_len, seq_len)
+#         attention_scores = (query @ key.transpose(-2, -1)) / math.sqrt(d_k)
 
-        if mask is not None:
-            # write a very low value (-inf) to the position where mask == 0
-            attention_scores.masked_fill_(mask == 0, torch.finfo(attention_scores.dtype).min)
-        attention_scores = attention_scores.softmax(dim=-1) # (batch, h, seq_len, seq_len) apply softmax
+#         if mask is not None:
+#             # write a very low value (-inf) to the position where mask == 0
+#             attention_scores.masked_fill_(mask == 0, torch.finfo(attention_scores.dtype).min)
+#         attention_scores = attention_scores.softmax(dim=-1) # (batch, h, seq_len, seq_len) apply softmax
 
-        if dropout is not None:
-            attention_scores = dropout(attention_scores)
-        # (batch, h, seq_len, seq_len) -> (batch, h, seq_len, d_k)
-        # return attention scores which can be used for visualization
-        return (attention_scores @ value), attention_scores
+#         if dropout is not None:
+#             attention_scores = dropout(attention_scores)
+#         # (batch, h, seq_len, seq_len) -> (batch, h, seq_len, d_k)
+#         # return attention scores which can be used for visualization
+#         return (attention_scores @ value), attention_scores
 
-    def forward(self, q, k, v, mask):
-        query = self.w_q(q) # (batch, seq_len, d_model) -> (batch, seq_len, d_model)
-        key = self.w_k(k) # (batch, seq_len, d_model) -> (batch, seq_len, d_model)
-        value = self.w_v(v) # (batch, seq_len, d_model) -> (batch, seq_len, d_model)
+#     def forward(self, q, k, v, mask):
+#         query = self.w_q(q) # (batch, seq_len, d_model) -> (batch, seq_len, d_model)
+#         key = self.w_k(k) # (batch, seq_len, d_model) -> (batch, seq_len, d_model)
+#         value = self.w_v(v) # (batch, seq_len, d_model) -> (batch, seq_len, d_model)
 
-        # need to accomodate h here
-        # (batch, seq_len, d_model) -> (batch, seq_len, h, d_k) -> (batch, h, seq_len, dk)
-        query = query.view(query.shape[0], query.shape[1], self.h, self.d_k).transpose(1, 2) 
-        key = key.view(key.shape[0], key.shape[1], self.h, self.d_k).transpose(1, 2)
-        value = value.view(value.shape[0], value.shape[1], self.h, self.d_k).transpose(1, 2)
+#         # need to accomodate h here
+#         # (batch, seq_len, d_model) -> (batch, seq_len, h, d_k) -> (batch, h, seq_len, dk)
+#         query = query.view(query.shape[0], query.shape[1], self.h, self.d_k).transpose(1, 2) 
+#         key = key.view(key.shape[0], key.shape[1], self.h, self.d_k).transpose(1, 2)
+#         value = value.view(value.shape[0], value.shape[1], self.h, self.d_k).transpose(1, 2)
 
-        # calculate attention
-        x, attention_scores = MultiHeadAttentionBlock.attention(query, key, value, mask, self.dropout)
+#         # calculate attention
+#         x, attention_scores = MultiHeadAttentionBlock.attention(query, key, value, mask, self.dropout)
 
-        # combine all the heads together
-        # (batch_len, h, seq_len, d_k) -> (batch, seq_len, h, d_k) -> (batch, seq_len, d_model)
-        x = x.transpose(1, 2).contiguous().view(x.shape[0], -1, self.h * self.d_k)
-        # -1 makes pytorch infer the dimension so becomes seq_len automatically
-        # contiguous is required to ensure tensor is stored in the contiguous chunk of memory, needed before .view() after transpose
+#         # combine all the heads together
+#         # (batch_len, h, seq_len, d_k) -> (batch, seq_len, h, d_k) -> (batch, seq_len, d_model)
+#         x = x.transpose(1, 2).contiguous().view(x.shape[0], -1, self.h * self.d_k)
+#         # -1 makes pytorch infer the dimension so becomes seq_len automatically
+#         # contiguous is required to ensure tensor is stored in the contiguous chunk of memory, needed before .view() after transpose
 
-        # multiply by Wo
-        # (batch, seq_len, d_model) -> (batch, seq_len, d_model)
-        return self.w_o(x)
+#         # multiply by Wo
+#         # (batch, seq_len, d_model) -> (batch, seq_len, d_model)
+#         return self.w_o(x)
 
 # this below adds cross-attention between head treating head as a token
 class MultiHeadAttentionBlock(nn.Module):
