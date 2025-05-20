@@ -1,0 +1,26 @@
+# Ignore model weights and checkpoints
+*.pt
+*.pth
+*.bin
+*.h5
+*.ckpt
+
+# Ignore logs and TensorBoard files
+runs/
+*.log
+*.out
+
+# Ignore Python cache and system files
+__pycache__/
+*.pyc
+.DS_Store
+
+# Ignore environment files
+.env
+.venv/
+*.ipynb_checkpoints
+
+# Ignore large datasets
+data/
+*.csv
+*.tsv
