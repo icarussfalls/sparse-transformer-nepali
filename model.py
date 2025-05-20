@@ -3,6 +3,7 @@ import torch.nn as nn
 import math
 import torch.nn.functional as F
 from nltk.translate.bleu_score import sentence_bleu, SmoothingFunction
+from config import get_config
 
 # input embeddings are created to convert the original sentences into a vector of 512 dimension
 # vocab size is the number of unique tokens
@@ -110,7 +111,7 @@ class PositionalEncoding(nn.Module):
 
 # this below adds cross-attention between head treating head as a token
 class MultiHeadAttentionBlock(nn.Module):
-    def __init__(self, d_model, num_heads, dropout=0.1):
+    def __init__(self, d_model, num_heads, d_ff, dropout):
         super().__init__()
         assert d_model % num_heads == 0, "d_model must be divisible by num_heads"
 
@@ -137,6 +138,10 @@ class MultiHeadAttentionBlock(nn.Module):
 
         # LayerNorm for residuals
         self.norm1 = LayerNormalization(d_model)
+        self.norm2 = LayerNormalization(d_model)
+
+        # Feed forward network
+        self.ffn = FeedForwardBlock(d_model, d_ff, dropout)
 
     def forward(self, q_input, k_input, v_input, mask=None):
         residual = q_input
@@ -180,7 +185,12 @@ class MultiHeadAttentionBlock(nn.Module):
 
         # 5. Residual + LayerNorm (Post-Norm)
         out1 = self.norm1(output + residual)
-        return out1
+
+        # 6. Add FFN + residual + norm2
+        residual2 = out1
+        ffn_out = self.ffn(out1)
+        out2 = self.norm2(ffn_out + residual2)
+        return out2
 
 # alpha is the learnable parameter initialized to one of shape (features,) which scales the normalized outputs
 # bias is the learnable parameter initialized to zeros of shape (features,) which shifts the normalized outputs
@@ -328,7 +338,8 @@ class Transformer(nn.Module):
     
 
 # lets build the full transformers now
-def build_transformer(src_vocab_size: int, tgt_vocab_size: int, src_seq_len: int, tgt_seq_len: int, d_model: int=512, N: int=6, h: int=8, dropout: float=0.1, d_ff: int=2048) -> Transformer:
+
+def build_transformer(src_vocab_size: int, tgt_vocab_size: int, src_seq_len: int, tgt_seq_len: int, d_model: int, N: int, h: int, dropout: float, d_ff: int) -> Transformer:    
     # create the embedding layers
     src_embed = InputEmbeddings(d_model, src_vocab_size)
     tgt_embed = InputEmbeddings(d_model, tgt_vocab_size)
@@ -340,7 +351,7 @@ def build_transformer(src_vocab_size: int, tgt_vocab_size: int, src_seq_len: int
     # create the encoder blocks
     encoder_blocks = []
     for _ in range(N):
-        encoder_self_attention_block = MultiHeadAttentionBlock(d_model, h, dropout)
+        encoder_self_attention_block = MultiHeadAttentionBlock(d_model, h, d_ff, dropout)
         feed_forward_block = FeedForwardBlock(d_model, d_ff, dropout)
         encoder_block = EncoderBlock(d_model, encoder_self_attention_block, feed_forward_block, dropout)
         encoder_blocks.append(encoder_block)
@@ -349,8 +360,8 @@ def build_transformer(src_vocab_size: int, tgt_vocab_size: int, src_seq_len: int
     # create the decoder blocks
     decoder_blocks = []
     for _ in range(N):
-        decoder_self_attention_block = MultiHeadAttentionBlock(d_model, h, dropout)
-        decoder_cross_attention_block = MultiHeadAttentionBlock(d_model, h, dropout)
+        decoder_self_attention_block = MultiHeadAttentionBlock(d_model, h, d_ff, dropout)
+        decoder_cross_attention_block = MultiHeadAttentionBlock(d_model, h, d_ff, dropout)
         feed_forward_block = FeedForwardBlock(d_model, d_ff, dropout)
         decoder_block = DecoderBlock(d_model, decoder_self_attention_block, decoder_cross_attention_block, feed_forward_block, dropout)
         decoder_blocks.append(decoder_block)

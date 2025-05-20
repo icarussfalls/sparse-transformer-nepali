@@ -7,6 +7,10 @@ def get_config():
         'lr': 10**-4,
         'seq_len': 300, # 600
         'd_model' : 256, # 512 original
+        'd_ff' : 256, # 2048 original # this is in feed forward layers
+        'N': 8, # no of encoders/decoders,
+        'h': 8, # no of heads
+        'dropout': 0.1,
         'data_source': 'sharad461/ne-en-parallel-208k',
         'lang_src': 'en',
         'lang_tgt': 'ne',
