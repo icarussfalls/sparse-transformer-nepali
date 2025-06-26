@@ -3,6 +3,7 @@ import torch.nn as nn
 import math
 import torch.nn.functional as F
 from config import get_config
+from utils import *
 
 # input embeddings are created to convert the original sentences into a vector of 512 dimension
 # vocab size is the number of unique tokens
@@ -51,137 +52,128 @@ class PositionalEncoding(nn.Module):
 # d_k is the dimension of the vector processed by the each head == d_model // h
 # w_q, w_k, w_v, w_o are linear layers that project the input vectors to queries, keys, values, and outputs resp.
 
-# class MultiHeadAttentionBlock(nn.Module):
-#     def __init__(self, d_model: int, h: int, dropout: float) -> None:
-#         super().__init__()
-
-#         self.d_model = d_model # embedding vector size
-#         self.h = h # number of heads
-#         # making sure d_model is divisible by h
-#         assert d_model % h == 0, "d_model is not divisible by h"
-
-#         self.d_k = d_model // h # dimension of the vector seen by each head
-#         self.w_q = nn.Linear(d_model, d_model, bias=False) # Wq
-#         self.w_k = nn.Linear(d_model, d_model, bias=False) # Wk
-#         self.w_v = nn.Linear(d_model, d_model, bias=False) # Wv
-#         self.w_o = nn.Linear(d_model, d_model, bias=False) # Wo
-#         self.dropout = nn.Dropout(dropout)
-
-#     @staticmethod
-#     def attention(query, key, value, mask, dropout: nn.Dropout):
-#         d_k = query.shape[-1]
-#         # (batch, h, seq_len, d_k) --> (batch, h, seq_len, seq_len)
-#         attention_scores = (query @ key.transpose(-2, -1)) / math.sqrt(d_k)
-
-#         if mask is not None:
-#             # write a very low value (-inf) to the position where mask == 0
-#             attention_scores.masked_fill_(mask == 0, torch.finfo(attention_scores.dtype).min)
-#         attention_scores = attention_scores.softmax(dim=-1) # (batch, h, seq_len, seq_len) apply softmax
-
-#         if dropout is not None:
-#             attention_scores = dropout(attention_scores)
-#         # (batch, h, seq_len, seq_len) -> (batch, h, seq_len, d_k)
-#         # return attention scores which can be used for visualization
-#         return (attention_scores @ value), attention_scores
-
-#     def forward(self, q, k, v, mask):
-#         query = self.w_q(q) # (batch, seq_len, d_model) -> (batch, seq_len, d_model)
-#         key = self.w_k(k) # (batch, seq_len, d_model) -> (batch, seq_len, d_model)
-#         value = self.w_v(v) # (batch, seq_len, d_model) -> (batch, seq_len, d_model)
-
-#         # need to accomodate h here
-#         # (batch, seq_len, d_model) -> (batch, seq_len, h, d_k) -> (batch, h, seq_len, dk)
-#         query = query.view(query.shape[0], query.shape[1], self.h, self.d_k).transpose(1, 2) 
-#         key = key.view(key.shape[0], key.shape[1], self.h, self.d_k).transpose(1, 2)
-#         value = value.view(value.shape[0], value.shape[1], self.h, self.d_k).transpose(1, 2)
-
-#         # calculate attention
-#         x, attention_scores = MultiHeadAttentionBlock.attention(query, key, value, mask, self.dropout)
-
-#         # combine all the heads together
-#         # (batch_len, h, seq_len, d_k) -> (batch, seq_len, h, d_k) -> (batch, seq_len, d_model)
-#         x = x.transpose(1, 2).contiguous().view(x.shape[0], -1, self.h * self.d_k)
-#         # -1 makes pytorch infer the dimension so becomes seq_len automatically
-#         # contiguous is required to ensure tensor is stored in the contiguous chunk of memory, needed before .view() after transpose
-
-#         # multiply by Wo
-#         # (batch, seq_len, d_model) -> (batch, seq_len, d_model)
-#         return self.w_o(x)
-
-# this below adds cross-attention between head treating head as a token
 class MultiHeadAttentionBlock(nn.Module):
-    def __init__(self, d_model, num_heads, dropout):
+    def __init__(self, d_model: int, h: int, dropout: float) -> None:
         super().__init__()
-        assert d_model % num_heads == 0, "d_model must be divisible by num_heads"
 
-        self.d_model = d_model
-        self.h = num_heads
-        self.d_k = d_model // num_heads
+        self.d_model = d_model # embedding vector size
+        self.h = h # number of heads
+        # making sure d_model is divisible by h
+        assert d_model % h == 0, "d_model is not divisible by h"
 
-        # Linear layers for Q, K, V
-        self.w_q = nn.Linear(d_model, d_model)
-        self.w_k = nn.Linear(d_model, d_model)
-        self.w_v = nn.Linear(d_model, d_model)
-
-        # Output projection
-        self.w_o = nn.Linear(d_model, d_model)
-
-        # Dropout for attention weights
+        self.d_k = d_model // h # dimension of the vector seen by each head
+        self.w_q = nn.Linear(d_model, d_model, bias=False) # Wq
+        self.w_k = nn.Linear(d_model, d_model, bias=False) # Wk
+        self.w_v = nn.Linear(d_model, d_model, bias=False) # Wv
+        self.w_o = nn.Linear(d_model, d_model, bias=False) # Wo
         self.dropout = nn.Dropout(dropout)
 
-        # Cross-head attention: shared layers
-        self.inter_head_q = nn.Linear(self.d_k, self.d_k)
-        self.inter_head_k = nn.Linear(self.d_k, self.d_k)
-        self.inter_head_v = nn.Linear(self.d_k, self.d_k)
-        self.inter_head_out = nn.Linear(self.d_k, self.d_k)
+    @staticmethod
+    def attention(query, key, value, mask, dropout: nn.Dropout):
+        d_k = query.shape[-1]
+        # (batch, h, seq_len, d_k) --> (batch, h, seq_len, seq_len)
+        attention_scores = (query @ key.transpose(-2, -1)) / math.sqrt(d_k)
 
-        # LayerNorm for residuals
-        self.norm1 = LayerNormalization(d_model)
-
-
-    def forward(self, q_input, k_input, v_input, mask=None):
-        residual = q_input
-        B, L, _ = q_input.size()
-        Bk, Lk, _ = k_input.size()  # Sequence length of key (encoder output)
-        Bv, Lv, _ = v_input.size()  # Sequence length of key (encoder output)
-
-        # 1. Linear projections + reshape to (B, h, L, d_k)
-        Q = self.w_q(q_input).view(B, L, self.h, self.d_k).transpose(1, 2)
-        K = self.w_k(k_input).view(Bk, Lk, self.h, self.d_k).transpose(1, 2)
-        V = self.w_v(v_input).view(Bv, Lv, self.h, self.d_k).transpose(1, 2)
-
-        # 2. Scaled dot-product attention per head
-        attn_scores = (Q @ K.transpose(-2, -1)) / math.sqrt(self.d_k)
         if mask is not None:
-            attn_scores.masked_fill_(mask == 0, torch.finfo(attn_scores.dtype).min)
-        attn_probs = F.softmax(attn_scores, dim=-1)
-        attn_probs = self.dropout(attn_probs)
-        attn_out = attn_probs @ V  # (B, h, L, d_k)
+            # write a very low value (-inf) to the position where mask == 0
+            attention_scores.masked_fill_(mask == 0, torch.finfo(attention_scores.dtype).min)
+        attention_scores = attention_scores.softmax(dim=-1) # (batch, h, seq_len, seq_len) apply softmax
 
-        # 3. Inter-head attention: treat each head as a "token"
-        # Transpose to (B, L, h, d_k) for head-wise mixing
-        heads = attn_out.transpose(1, 2)  # (B, L, h, d_k)
+        if dropout is not None:
+            attention_scores = dropout(attention_scores)
+        # (batch, h, seq_len, seq_len) -> (batch, h, seq_len, d_k)
+        # return attention scores which can be used for visualization
+        return (attention_scores @ value), attention_scores
 
-        Qh = self.inter_head_q(heads)
-        Kh = self.inter_head_k(heads)
-        Vh = self.inter_head_v(heads)
+    def forward(self, q, k, v, mask):
+        query = self.w_q(q) # (batch, seq_len, d_model) -> (batch, seq_len, d_model)
+        key = self.w_k(k) # (batch, seq_len, d_model) -> (batch, seq_len, d_model)
+        value = self.w_v(v) # (batch, seq_len, d_model) -> (batch, seq_len, d_model)
 
-        # Attention across heads: (B, L, h, d_k) × (B, L, d_k, h) → (B, L, h, h)
-        inter_scores = (Qh @ Kh.transpose(-2, -1)) / math.sqrt(self.d_k)
-        inter_probs = F.softmax(inter_scores, dim=-1)
-        inter_probs = self.dropout(inter_probs)
-        mixed_heads = inter_probs @ Vh  # (B, L, h, d_k)
+        # need to accomodate h here
+        # (batch, seq_len, d_model) -> (batch, seq_len, h, d_k) -> (batch, h, seq_len, dk)
+        query = query.view(query.shape[0], query.shape[1], self.h, self.d_k).transpose(1, 2) 
+        key = key.view(key.shape[0], key.shape[1], self.h, self.d_k).transpose(1, 2)
+        value = value.view(value.shape[0], value.shape[1], self.h, self.d_k).transpose(1, 2)
 
-        # Reshape back to (B, h, L, d_k)
-        mixed_heads = mixed_heads.transpose(1, 2)
+        # calculate attention
+        x, attention_scores = MultiHeadAttentionBlock.attention(query, key, value, mask, self.dropout)
 
-        # 4. Concatenate heads and final projection
-        concat = mixed_heads.transpose(1, 2).contiguous().view(B, L, self.d_model)
-        output = self.w_o(concat)
+        # combine all the heads together
+        # (batch_len, h, seq_len, d_k) -> (batch, seq_len, h, d_k) -> (batch, seq_len, d_model)
+        x = x.transpose(1, 2).contiguous().view(x.shape[0], -1, self.h * self.d_k)
+        # -1 makes pytorch infer the dimension so becomes seq_len automatically
+        # contiguous is required to ensure tensor is stored in the contiguous chunk of memory, needed before .view() after transpose
 
-        # 5. Residual + LayerNorm (Post-Norm)
-        out = self.norm1(output + residual)
-        return out
+        # multiply by Wo
+        # (batch, seq_len, d_model) -> (batch, seq_len, d_model)
+        return self.w_o(x)
+
+
+class SparseMultiHeadAttentionBlock(nn.Module):
+    def __init__(self, d_model:int, h:int, dropout:float, block_size=64, stride=64, causal=False):
+        super().__init__()
+
+        self.d_model = d_model
+        self.h = h
+        self.d_k = d_model // h # this is the dimension of the vector seen by each head
+
+        self.block_size = block_size
+        self.stride = stride
+        self.causal = causal
+
+        assert d_model % h == 0, "d_model must be divisible by h"
+
+        self.w_q = nn.Linear(d_model, d_model, bias=False)
+        self.w_k = nn.Linear(d_model, d_model, bias=False)
+        self.w_v = nn.Linear(d_model, d_model, bias=False)
+        self.w_o = nn.Linear(d_model, d_model, bias=False)
+        self.dropout = nn.Dropout(dropout)
+
+    # def forward(self, x):
+    #     B, T, _ = x.shape
+    #     q, k , v = self.compute_qkv(x)
+    #     attn_mask = self.build_sparse_mask(T, x.device, B)
+
+    #     attn_out = self.compute_attention(q, k, v, attn_mask)
+    #     return self.output_projection(attn_out)
+    
+    def forward(self, q, k, v, mask):
+        B, T, _ = q.shape
+        q, k, v = self.compute_qkv(q)  # you can use q only since q=k=v usually in self-attn
+        attn_mask = self.build_sparse_mask(T, q.device, B)
+        attn_out = self.compute_attention(q, k, v, attn_mask)
+        return self.output_projection(attn_out)
+
+
+    def compute_qkv(self, x):
+        B, T, _ = x.shape
+        q = self.w_q(x).view(B, T, self.h, self.d_k).transpose(1,2) # (B, h, T, d_k)
+        k = self.w_k(x).view(B, T, self.h, self.d_k).transpose(1, 2)
+        v = self.w_v(x).view(B, T, self.h, self.d_k).transpose(1, 2)
+        return q, k, v
+
+    def build_sparse_mask(self, seq_len, device, batch_size):
+        base_mask = create_sparse_mask(
+            seq_len, self.block_size, self.stride, causal=self.causal, device=device) # (1, 1, T, T)
+        
+        # expand to (B, h, T, T)
+        return base_mask.expand(batch_size, self.h, seq_len, seq_len)
+
+    def compute_attention(self, q, k, v, mask):
+        # (B, h, T, T)
+        scores = torch.matmul(q, k.transpose(-2, -1)) // math.sqrt(self.d_k)
+        scores = scores.masked_fill(~mask, float("-inf"))
+        attn_weights = F.softmax(scores, dim=-1)
+        attn_weights = self.dropout(attn_weights)
+        return torch.matmul(attn_weights, v) # (B, h, T, d_k)
+
+    def output_projection(self, x):
+        B, h, T, d_k = x.size()
+        x = x.transpose(1, 2).contiguous().view(B, T, h*d_k)
+        return self.w_o(x)
+    
+
 
 # alpha is the learnable parameter initialized to one of shape (features,) which scales the normalized outputs
 # bias is the learnable parameter initialized to zeros of shape (features,) which shifts the normalized outputs
@@ -224,7 +216,7 @@ class ResidualConnection(nn.Module):
 
 # this is like the one layer
 class EncoderBlock(nn.Module):
-    def __init__(self, features: int, self_attention_block : MultiHeadAttentionBlock, feed_forward_block: FeedForwardBlock, dropout: float) -> None:
+    def __init__(self, features: int, self_attention_block : SparseMultiHeadAttentionBlock, feed_forward_block: FeedForwardBlock, dropout: float) -> None:
         super().__init__()
         self.self_attention_block = self_attention_block
         self.feed_forward_block = feed_forward_block
@@ -249,7 +241,7 @@ class Encoder(nn.Module):
 
     
 class DecoderBlock(nn.Module):
-    def __init__(self, features:int, self_attention_block: MultiHeadAttentionBlock, cross_attention_block: MultiHeadAttentionBlock, feed_forward_block: FeedForwardBlock, dropout: float) -> None:
+    def __init__(self, features:int, self_attention_block: SparseMultiHeadAttentionBlock, cross_attention_block: MultiHeadAttentionBlock, feed_forward_block: FeedForwardBlock, dropout: float) -> None:
         super().__init__()
         self.self_attention_block = self_attention_block
         self.cross_attention_block = cross_attention_block
@@ -342,7 +334,7 @@ def build_transformer(src_vocab_size: int, tgt_vocab_size: int, src_seq_len: int
     # create the encoder blocks
     encoder_blocks = []
     for _ in range(N):
-        encoder_self_attention_block = MultiHeadAttentionBlock(d_model, h, dropout)
+        encoder_self_attention_block = SparseMultiHeadAttentionBlock(d_model, h, dropout, block_size=64, stride=64, causal=False)
         feed_forward_block = FeedForwardBlock(d_model, d_ff, dropout)
         encoder_block = EncoderBlock(d_model, encoder_self_attention_block, feed_forward_block, dropout)
         encoder_blocks.append(encoder_block)
@@ -351,7 +343,7 @@ def build_transformer(src_vocab_size: int, tgt_vocab_size: int, src_seq_len: int
     # create the decoder blocks
     decoder_blocks = []
     for _ in range(N):
-        decoder_self_attention_block = MultiHeadAttentionBlock(d_model, h, dropout)
+        decoder_self_attention_block = SparseMultiHeadAttentionBlock(d_model, h, dropout, block_size=64, stride=64, causal=True)
         decoder_cross_attention_block = MultiHeadAttentionBlock(d_model, h, dropout)
         feed_forward_block = FeedForwardBlock(d_model, d_ff, dropout)
         decoder_block = DecoderBlock(d_model, decoder_self_attention_block, decoder_cross_attention_block, feed_forward_block, dropout)
@@ -373,3 +365,42 @@ def build_transformer(src_vocab_size: int, tgt_vocab_size: int, src_seq_len: int
             nn.init.xavier_uniform_(p)
     # xavier uniform (glorot initialization) initializes the weights of neural networks to keep the scale of gradients roughly the same in all layers, help prevent vanishing/exploding gradients
     return transformer
+
+
+
+# === Dummy parameters ===
+batch_size = 2
+src_seq_len = 16
+tgt_seq_len = 16
+src_vocab_size = 100
+tgt_vocab_size = 100
+d_model = 64
+N = 2
+h = 4
+dropout = 0.1
+d_ff = 256
+
+# === Dummy input tokens (random integers representing word indices) ===
+src_input = torch.randint(0, src_vocab_size, (batch_size, src_seq_len))  # (B, T_src)
+tgt_input = torch.randint(0, tgt_vocab_size, (batch_size, tgt_seq_len))  # (B, T_tgt)
+
+# === Dummy masks (1 means keep, 0 means pad/mask) ===
+src_mask = torch.ones((batch_size, 1, 1, src_seq_len), dtype=torch.bool)
+tgt_mask = torch.ones((batch_size, 1, tgt_seq_len, tgt_seq_len), dtype=torch.bool)
+
+# Add causal mask to tgt_mask (prevent future token info)
+causal_mask = torch.tril(torch.ones((tgt_seq_len, tgt_seq_len), dtype=torch.bool))  # (T_tgt, T_tgt)
+tgt_mask = tgt_mask & causal_mask  # (B, 1, T_tgt, T_tgt)
+
+
+# === Build the transformer ===
+transformer = build_transformer(
+    src_vocab_size, tgt_vocab_size, src_seq_len, tgt_seq_len,
+    d_model, N, h, dropout, d_ff
+)
+
+# === Forward pass ===
+output = transformer(src_input, tgt_input, src_mask, tgt_mask)
+
+print("Output shape:", output.shape)  # Expected: (batch_size, tgt_seq_len, tgt_vocab_size)
+
