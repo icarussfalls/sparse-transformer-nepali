@@ -5,7 +5,7 @@ def get_config():
         'batch_size': 16,
         'num_epochs' : 20,
         'lr': 10**-4,
-        'seq_len': 600, # 600
+        'seq_len': 500, # 600 original
         'd_model' : 512, # 512 original
         'd_ff' : 2048, # 2048 original # this is in feed forward layers
         'N': 8, # no of encoders/decoders,
