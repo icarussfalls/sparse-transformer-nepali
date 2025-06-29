@@ -171,6 +171,9 @@ class SparseMultiHeadAttentionBlock(nn.Module):
     def compute_attention(self, q, k, v, mask):
         # (B, h, T, T)
         scores = torch.matmul(q, k.transpose(-2, -1)) / math.sqrt(self.d_k)
+        # Ensure mask is boolean
+        if mask.dtype != torch.bool:
+            mask = mask.bool()
         scores = scores.masked_fill(~mask, float("-inf"))
         attn_weights = F.softmax(scores, dim=-1)
         attn_weights = self.dropout(attn_weights)
@@ -376,39 +379,39 @@ def build_transformer(src_vocab_size: int, tgt_vocab_size: int, src_seq_len: int
 
 
 
-# === Dummy parameters ===
-batch_size = 2
-src_seq_len = 16
-tgt_seq_len = 16
-src_vocab_size = 100
-tgt_vocab_size = 100
-d_model = 64
-N = 2
-h = 4
-dropout = 0.1
-d_ff = 256
+# # === Dummy parameters ===
+# batch_size = 2
+# src_seq_len = 16
+# tgt_seq_len = 16
+# src_vocab_size = 100
+# tgt_vocab_size = 100
+# d_model = 64
+# N = 2
+# h = 4
+# dropout = 0.1
+# d_ff = 256
 
-# === Dummy input tokens (random integers representing word indices) ===
-src_input = torch.randint(0, src_vocab_size, (batch_size, src_seq_len))  # (B, T_src)
-tgt_input = torch.randint(0, tgt_vocab_size, (batch_size, tgt_seq_len))  # (B, T_tgt)
+# # === Dummy input tokens (random integers representing word indices) ===
+# src_input = torch.randint(0, src_vocab_size, (batch_size, src_seq_len))  # (B, T_src)
+# tgt_input = torch.randint(0, tgt_vocab_size, (batch_size, tgt_seq_len))  # (B, T_tgt)
 
-# === Dummy masks (1 means keep, 0 means pad/mask) ===
-src_mask = torch.ones((batch_size, 1, 1, src_seq_len), dtype=torch.bool)
-tgt_mask = torch.ones((batch_size, 1, tgt_seq_len, tgt_seq_len), dtype=torch.bool)
+# # === Dummy masks (1 means keep, 0 means pad/mask) ===
+# src_mask = torch.ones((batch_size, 1, 1, src_seq_len), dtype=torch.bool)
+# tgt_mask = torch.ones((batch_size, 1, tgt_seq_len, tgt_seq_len), dtype=torch.bool)
 
-# Add causal mask to tgt_mask (prevent future token info)
-causal_mask = torch.tril(torch.ones((tgt_seq_len, tgt_seq_len), dtype=torch.bool))  # (T_tgt, T_tgt)
-tgt_mask = tgt_mask & causal_mask  # (B, 1, T_tgt, T_tgt)
+# # Add causal mask to tgt_mask (prevent future token info)
+# causal_mask = torch.tril(torch.ones((tgt_seq_len, tgt_seq_len), dtype=torch.bool))  # (T_tgt, T_tgt)
+# tgt_mask = tgt_mask & causal_mask  # (B, 1, T_tgt, T_tgt)
 
 
-# === Build the transformer ===
-transformer = build_transformer(
-    src_vocab_size, tgt_vocab_size, src_seq_len, tgt_seq_len,
-    d_model, N, h, dropout, d_ff
-)
+# # === Build the transformer ===
+# transformer = build_transformer(
+#     src_vocab_size, tgt_vocab_size, src_seq_len, tgt_seq_len,
+#     d_model, N, h, dropout, d_ff
+# )
 
-# === Forward pass ===
-output = transformer(src_input, tgt_input, src_mask, tgt_mask)
+# # === Forward pass ===
+# output = transformer(src_input, tgt_input, src_mask, tgt_mask)
 
-print("Output shape:", output.shape)  # Expected: (batch_size, tgt_seq_len, tgt_vocab_size)
+# print("Output shape:", output.shape)  # Expected: (batch_size, tgt_seq_len, tgt_vocab_size)
 
