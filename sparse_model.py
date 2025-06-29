@@ -140,8 +140,16 @@ class SparseMultiHeadAttentionBlock(nn.Module):
     
     def forward(self, q, k, v, mask):
         B, T, _ = q.shape
-        q, k, v = self.compute_qkv(q)  # you can use q only since q=k=v usually in self-attn
-        attn_mask = self.build_sparse_mask(T, q.device, B)
+        q, k, v = self.compute_qkv(q)
+        sparse_mask = self.build_sparse_mask(T, q.device, B)  # (B, h, T, T)
+        if mask is not None:
+            # Expand mask to (B, 1, T, T) if needed, then broadcast to (B, h, T, T)
+            if mask.dim() == 3:
+                mask = mask.unsqueeze(1)
+            mask = mask.expand(B, self.h, T, T)
+            attn_mask = sparse_mask & mask
+        else:
+            attn_mask = sparse_mask
         attn_out = self.compute_attention(q, k, v, attn_mask)
         return self.output_projection(attn_out)
 
@@ -162,7 +170,7 @@ class SparseMultiHeadAttentionBlock(nn.Module):
 
     def compute_attention(self, q, k, v, mask):
         # (B, h, T, T)
-        scores = torch.matmul(q, k.transpose(-2, -1)) // math.sqrt(self.d_k)
+        scores = torch.matmul(q, k.transpose(-2, -1)) / math.sqrt(self.d_k)
         scores = scores.masked_fill(~mask, float("-inf"))
         attn_weights = F.softmax(scores, dim=-1)
         attn_weights = self.dropout(attn_weights)
