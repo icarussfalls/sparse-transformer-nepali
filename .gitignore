@@ -24,3 +24,6 @@ __pycache__/
 data/
 *.csv
 *.tsv
+
+# Ignore the dataset library
+sharad461/

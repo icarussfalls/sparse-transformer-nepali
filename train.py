@@ -1,4 +1,5 @@
-from sparse_model import build_transformer
+from model import build_transformer
+from sparse_model import build_sparse_transformer
 from dataset import BilingualDataset, causal_mask
 from config import get_config, get_weights_file_path, latest_weight_file_path
 
@@ -83,20 +84,20 @@ def get_ds(config):
     ds_all = load_dataset(f"{config['data_source']}", "default", split='train')
 
     # lets use only 10% of the data
-    subset_size = int(0.1 * len(ds_all))
-    ds_raw = ds_all.select(range(subset_size))
-    print(f"Using {subset_size} samples out of {len(ds_all)}")
-    print(ds_raw[0])
+    #subset_size = int(0.1 * len(ds_all))
+    #ds_raw = ds_all.select(range(subset_size))
+    #print(f"Using {subset_size} samples out of {len(ds_all)}")
+    #print(ds_raw[0])
 
     # build the tokenizers
-    tokenizer_src = get_or_build_tokenizer(config, ds_raw, config['lang_src'])
-    tokenizer_tgt = get_or_build_tokenizer(config, ds_raw, config['lang_tgt'])
+    tokenizer_src = get_or_build_tokenizer(config, ds_all, config['lang_src'])
+    tokenizer_tgt = get_or_build_tokenizer(config, ds_all, config['lang_tgt'])
 
     # now 90% for training and remaning for validation
-    train_ds_size = int(len(ds_raw) * 0.9)
-    val_ds_size = len(ds_raw) - train_ds_size
+    train_ds_size = int(len(ds_all) * 0.9)
+    val_ds_size = len(ds_all) - train_ds_size
 
-    train_ds_raw, val_ds_raw = random_split(ds_raw, [train_ds_size, val_ds_size])
+    train_ds_raw, val_ds_raw = random_split(ds_all, [train_ds_size, val_ds_size])
 
     train_ds = BilingualDataset(train_ds_raw, tokenizer_src, tokenizer_tgt, config['lang_src'], config['lang_tgt'], seq_len=config['seq_len'])
     val_ds = BilingualDataset(val_ds_raw, tokenizer_src, tokenizer_tgt, config['lang_src'], config['lang_tgt'], seq_len=config['seq_len'])
@@ -105,7 +106,7 @@ def get_ds(config):
     max_len_src = 0
     max_len_tgt = 0
     
-    for item in ds_raw:
+    for item in ds_all:
         src_ids = tokenizer_src.encode(item[config['lang_src']]).ids
         tgt_ids = tokenizer_tgt.encode(item[config['lang_tgt']]).ids
         max_len_src = max(max_len_src, len(src_ids))
@@ -121,9 +122,14 @@ def get_ds(config):
     return train_dataloader, val_dataloader, tokenizer_src, tokenizer_tgt
 
 
-def get_model(config, vocab_src_len, vocab_tgt_len):
+def get_model(config, vocab_src_len, vocab_tgt_len, sparse=False):
     # (src_vocab_size: int, tgt_vocab_size: int, src_seq_len: int, tgt_seq_len: int, d_model: int, N: int, h: int, dropout: float, d_ff: int = None
+    if sparse:
+        print('building sparse transformers')
+        model = build_sparse_transformer(vocab_src_len, vocab_tgt_len, src_seq_len=config['seq_len'], tgt_seq_len=config['seq_len'], d_model = config['d_model'], N = config['N'], h=config['h'], dropout=config['dropout'], d_ff=config['d_ff'])
+        return model
     model = build_transformer(vocab_src_len, vocab_tgt_len, src_seq_len=config['seq_len'], tgt_seq_len=config['seq_len'], d_model = config['d_model'], N = config['N'], h=config['h'], dropout=config['dropout'], d_ff=config['d_ff'])
+    print('building vanilla transformers')
     return model
 
 
@@ -231,7 +237,7 @@ def run_validation(model, validation_ds, tokenizer_src, tokenizer_tgt, max_len, 
             f.write(f"Step {global_step}: BLEU={bleu:.4f}, CER={cer:.4f}, WER={wer:.4f}\n")
 
 
-def train_model(config):
+def train_model(config, sparse=False):
     # lets define the device first
     device = "cuda" if torch.cuda.is_available() else "mps" if getattr(torch.backends, "mps", None) and torch.backends.mps.is_available() else "cpu"
     print("using device", device)
@@ -249,7 +255,7 @@ def train_model(config):
 
     train_dataloader, val_dataloader, tokenizer_src, tokenizer_tgt = get_ds(config)
 
-    model = get_model(config, tokenizer_src.get_vocab_size(), tokenizer_tgt.get_vocab_size())
+    model = get_model(config, tokenizer_src.get_vocab_size(), tokenizer_tgt.get_vocab_size(), sparse)
     
     # added gpu parallel support
     if torch.cuda.device_count() > 1 and device == "cuda":
@@ -338,5 +344,5 @@ def train_model(config):
 if __name__ == "__main__":
     warnings.filterwarnings("ignore")
     config = get_config()
-    train_model(config)
+    train_model(config, sparse=True)
 
