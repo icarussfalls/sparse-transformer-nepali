@@ -83,11 +83,14 @@ def get_ds(config):
     # the data only has train split so
     ds_all = load_dataset(f"{config['data_source']}", "default", split='train')
 
-    # lets use only 10% of the data
-    #subset_size = int(0.1 * len(ds_all))
-    #ds_raw = ds_all.select(range(subset_size))
-    #print(f"Using {subset_size} samples out of {len(ds_all)}")
-    #print(ds_raw[0])
+    # Shuffle and select a random 10% subset
+    total_len = len(ds_all)
+    subset_size = int(0.1 * total_len)
+    indices = torch.randperm(total_len).tolist()[:subset_size]
+    ds_raw = ds_all.select(indices)
+    print(f"Using {subset_size} random samples out of {total_len}")
+
+    ds_all = ds_raw # setting to only 10% of the data to train faster
 
     # build the tokenizers
     tokenizer_src = get_or_build_tokenizer(config, ds_all, config['lang_src'])
