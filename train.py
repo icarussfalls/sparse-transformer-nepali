@@ -124,7 +124,7 @@ def get_ds(config):
 
 def get_model(config, vocab_src_len, vocab_tgt_len, sparse=False):
     # (src_vocab_size: int, tgt_vocab_size: int, src_seq_len: int, tgt_seq_len: int, d_model: int, N: int, h: int, dropout: float, d_ff: int = None
-    if sparse:
+    if config['use_sparse']:
         print('building sparse transformers')
         model = build_sparse_transformer(vocab_src_len, vocab_tgt_len, src_seq_len=config['seq_len'], tgt_seq_len=config['seq_len'], d_model = config['d_model'], N = config['N'], h=config['h'], dropout=config['dropout'], d_ff=config['d_ff'])
         return model

@@ -111,7 +111,7 @@ class MultiHeadAttentionBlock(nn.Module):
 
 
 class SparseMultiHeadAttentionBlock(nn.Module):
-    def __init__(self, d_model:int, h:int, dropout:float, block_size=64, stride=64, causal=False):
+    def __init__(self, d_model:int, h:int, dropout:float, block_size=int, stride=int, causal=False):
         super().__init__()
 
         self.d_model = d_model
@@ -333,7 +333,7 @@ class Transformer(nn.Module):
 
 # lets build the full transformers now
 
-def build_sparse_transformer(src_vocab_size: int, tgt_vocab_size: int, src_seq_len: int, tgt_seq_len: int, d_model: int, N: int, h: int, dropout: float, d_ff: int) -> Transformer:    
+def build_sparse_transformer(src_vocab_size: int, tgt_vocab_size: int, src_seq_len: int, tgt_seq_len: int, d_model: int, N: int, h: int, dropout: float, d_ff: int, block_size:int, stride:int) -> Transformer:    
     # create the embedding layers
     src_embed = InputEmbeddings(d_model, src_vocab_size)
     tgt_embed = InputEmbeddings(d_model, tgt_vocab_size)
@@ -345,7 +345,7 @@ def build_sparse_transformer(src_vocab_size: int, tgt_vocab_size: int, src_seq_l
     # create the encoder blocks
     encoder_blocks = []
     for _ in range(N):
-        encoder_self_attention_block = SparseMultiHeadAttentionBlock(d_model, h, dropout, block_size=64, stride=64, causal=False)
+        encoder_self_attention_block = SparseMultiHeadAttentionBlock(d_model, h, dropout, block_size=block_size, stride=stride, causal=False)
         feed_forward_block = FeedForwardBlock(d_model, d_ff, dropout)
         encoder_block = EncoderBlock(d_model, encoder_self_attention_block, feed_forward_block, dropout)
         encoder_blocks.append(encoder_block)
@@ -354,7 +354,7 @@ def build_sparse_transformer(src_vocab_size: int, tgt_vocab_size: int, src_seq_l
     # create the decoder blocks
     decoder_blocks = []
     for _ in range(N):
-        decoder_self_attention_block = SparseMultiHeadAttentionBlock(d_model, h, dropout, block_size=64, stride=64, causal=True)
+        decoder_self_attention_block = SparseMultiHeadAttentionBlock(d_model, h, dropout, block_size=block_size, stride=stride, causal=True)
         decoder_cross_attention_block = MultiHeadAttentionBlock(d_model, h, dropout)
         feed_forward_block = FeedForwardBlock(d_model, d_ff, dropout)
         decoder_block = DecoderBlock(d_model, decoder_self_attention_block, decoder_cross_attention_block, feed_forward_block, dropout)

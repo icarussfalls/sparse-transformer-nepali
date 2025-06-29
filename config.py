@@ -2,7 +2,7 @@ from pathlib import Path
 
 def get_config():
     return {
-        'batch_size': 32,
+        'batch_size': 8,
         'num_epochs' : 20,
         'lr': 10**-4,
         'seq_len': 600, # 600
@@ -11,6 +11,9 @@ def get_config():
         'N': 8, # no of encoders/decoders,
         'h': 8, # no of heads
         'dropout': 0.1,
+        'use_sparse': True,          
+        'sparse_block_size': 64,
+        'sparse_stride': 64,
         'data_source': 'sharad461/ne-en-parallel-208k',
         'lang_src': 'en',
         'lang_tgt': 'ne',
