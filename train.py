@@ -122,11 +122,11 @@ def get_ds(config):
     return train_dataloader, val_dataloader, tokenizer_src, tokenizer_tgt
 
 
-def get_model(config, vocab_src_len, vocab_tgt_len, sparse=False):
+def get_model(config, vocab_src_len, vocab_tgt_len):
     # (src_vocab_size: int, tgt_vocab_size: int, src_seq_len: int, tgt_seq_len: int, d_model: int, N: int, h: int, dropout: float, d_ff: int = None
     if config['use_sparse']:
         print('building sparse transformers')
-        model = build_sparse_transformer(vocab_src_len, vocab_tgt_len, src_seq_len=config['seq_len'], tgt_seq_len=config['seq_len'], d_model = config['d_model'], N = config['N'], h=config['h'], dropout=config['dropout'], d_ff=config['d_ff'])
+        model = build_sparse_transformer(vocab_src_len, vocab_tgt_len, src_seq_len=config['seq_len'], tgt_seq_len=config['seq_len'], d_model = config['d_model'], N = config['N'], h=config['h'], dropout=config['dropout'], d_ff=config['d_ff'], block_size=config['sparse_block_size'], stride=config['sparse_stride'])
         return model
     model = build_transformer(vocab_src_len, vocab_tgt_len, src_seq_len=config['seq_len'], tgt_seq_len=config['seq_len'], d_model = config['d_model'], N = config['N'], h=config['h'], dropout=config['dropout'], d_ff=config['d_ff'])
     print('building vanilla transformers')
@@ -237,7 +237,7 @@ def run_validation(model, validation_ds, tokenizer_src, tokenizer_tgt, max_len, 
             f.write(f"Step {global_step}: BLEU={bleu:.4f}, CER={cer:.4f}, WER={wer:.4f}\n")
 
 
-def train_model(config, sparse=False):
+def train_model(config):
     # lets define the device first
     device = "cuda" if torch.cuda.is_available() else "mps" if getattr(torch.backends, "mps", None) and torch.backends.mps.is_available() else "cpu"
     print("using device", device)
@@ -255,7 +255,7 @@ def train_model(config, sparse=False):
 
     train_dataloader, val_dataloader, tokenizer_src, tokenizer_tgt = get_ds(config)
 
-    model = get_model(config, tokenizer_src.get_vocab_size(), tokenizer_tgt.get_vocab_size(), sparse)
+    model = get_model(config, tokenizer_src.get_vocab_size(), tokenizer_tgt.get_vocab_size())
     
     # added gpu parallel support
     if torch.cuda.device_count() > 1 and device == "cuda":
@@ -344,5 +344,5 @@ def train_model(config, sparse=False):
 if __name__ == "__main__":
     warnings.filterwarnings("ignore")
     config = get_config()
-    train_model(config, sparse=True)
+    train_model(config)
 
