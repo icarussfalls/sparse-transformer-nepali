@@ -181,7 +181,8 @@ def run_validation(model, validation_ds, tokenizer_src, tokenizer_tgt, max_len, 
 
             source_text = batch['src_text'][0]
             target_text = batch['tgt_text'][0]
-            model_out_text = tokenizer_tgt.decode(model_out.detach().cpu().numpy())
+            model_out_ids = model_out.detach().cpu().numpy().tolist()
+            model_out_text = tokenizer_tgt.decode(model_out_ids)
 
             source_texts.append(source_text)
             expected.append(target_text)
