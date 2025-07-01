@@ -442,5 +442,9 @@ if __name__ == "__main__":
     warnings.filterwarnings("ignore")
     config = get_config()
     world_size = torch.cuda.device_count()
-    mp.spawn(train_model_ddp, args=(world_size, config), nprocs=world_size)
+    # On Kaggle, always use single GPU
+    if world_size > 1 and not os.environ.get("KAGGLE_KERNEL_RUN_TYPE"):
+        mp.spawn(train_model_ddp, args=(world_size, config), nprocs=world_size)
+    else:
+        train_model(config)
 
