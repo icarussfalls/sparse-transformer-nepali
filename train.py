@@ -328,13 +328,13 @@ def train_model(config):
             if scaler is not None:
                 with autocast():
                     proj_output = model(encoder_input, decoder_input, encoder_mask, decoder_mask)
-                    loss = loss_fn(proj_output.view(-1, tokenizer_tgt.get_vocab_size()), label.view(-1))
+                    loss = loss_fn(proj_output.view(-1, tokenizer_tgt.vocab_size()), label.view(-1))
                 scaler.scale(loss).backward()
                 scaler.step(optimizer)
                 scaler.update()
             else:
                 proj_output = model(encoder_input, decoder_input, encoder_mask, decoder_mask)
-                loss = loss_fn(proj_output.view(-1, tokenizer_tgt.get_vocab_size()), label.view(-1))
+                loss = loss_fn(proj_output.view(-1, tokenizer_tgt.vocab_size()), label.view(-1))
                 loss.backward()
                 optimizer.step()
 
