@@ -82,7 +82,7 @@ def get_ds(config):
     # the data only has train split so
     ds_all = load_dataset(f"{config['data_source']}", "default", split='train')
 
-    # Shuffle and select a random 10% subset
+    # Shuffle and select a random 1% subset
     subset_size = 0.1
     total_len = len(ds_all)
     subset_size = int(subset_size * total_len)
@@ -188,14 +188,13 @@ def run_validation(model, validation_ds, tokenizer_src, tokenizer_tgt, max_len, 
             predicted.append(model_out_text)
 
             # print the source, target, and model output
-            if count <= 3:  # Only print the first examples
-                print_msg('-'*console_width)
-                print_msg(f"{f'source: ' :>12}{source_text}")
-                print_msg(f"{f'target: ' :>12}{target_text}")
-                print_msg(f"{f'predicted: ' :>12}{model_out_text}")
+            print_msg('-'*console_width)
+            print_msg(f"{f'source: ' :>12}{source_text}")
+            print_msg(f"{f'target: ' :>12}{target_text}")
+            print_msg(f"{f'predicted: ' :>12}{model_out_text}")
 
-            # if count == num_examples:
-            #     break
+            if count == num_examples:
+                break
 
     if writer:
         # evaluate the character error rate
