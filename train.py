@@ -83,13 +83,14 @@ def get_ds(config):
     ds_all = load_dataset(f"{config['data_source']}", "default", split='train')
 
     # Shuffle and select a random 1% subset
+    subset_size = 0.1
     total_len = len(ds_all)
-    subset_size = int(0.01 * total_len)
+    subset_size = int(subset_size * total_len)
     indices = torch.randperm(total_len).tolist()[:subset_size]
     ds_raw = ds_all.select(indices)
     print(f"Using {subset_size} random samples out of {total_len}")
 
-    ds_all = ds_raw # setting to only 1% of the data to train faster
+    ds_all = ds_raw # setting to only subset of the data to train faster
 
     # build the tokenizers
     tokenizer_src = get_or_build_tokenizer(config, ds_all, config['lang_src'])
@@ -166,7 +167,21 @@ def run_validation(model, validation_ds, tokenizer_src, tokenizer_tgt, max_len, 
 
             source_text = batch['src_text'][0]
             target_text = batch['tgt_text'][0]
-            model_out_text = tokenizer_tgt.decode(model_out.detach().cpu().numpy().tolist())
+            # Decode the model output IDs to text
+            output_ids = model_out.detach().cpu().numpy().tolist()
+
+            # Remove special tokens
+            sos_id = tokenizer_tgt.piece_to_id("[SOS]")
+            eos_id = tokenizer_tgt.piece_to_id("[EOS]")
+
+            # Remove [SOS] if present at the start, and [EOS] if present at the end
+            if output_ids[0] == sos_id:
+                output_ids = output_ids[1:]
+            if output_ids and output_ids[-1] == eos_id:
+                output_ids = output_ids[:-1]
+
+            # Decode to text
+            model_out_text = tokenizer_tgt.decode(output_ids)
 
             source_texts.append(source_text)
             expected.append(target_text)
