@@ -90,7 +90,7 @@ def get_ds(config):
     ds_raw = ds_all.select(indices)
     print(f"Using {subset_size} random samples out of {total_len}")
 
-    ds_all = ds_raw # setting to only 1% of the data to train faster
+    ds_all = ds_raw # setting to only 10% of the data to train faster
 
     # build the tokenizers
     tokenizer_src = get_or_build_tokenizer(config, ds_all, config['lang_src'])
@@ -325,6 +325,8 @@ def train_model(config):
                 loss.backward()
                 optimizer.step()
 
+            torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm=1.0)
+
             batch_iterator.set_postfix({"loss": f"{loss.item():6.3f}"})
             writer.add_scalar('train_loss', loss.item(), global_step)
             writer.flush()
@@ -343,6 +345,12 @@ def train_model(config):
                 'optimizer_state_dict': optimizer.state_dict(),
                 'global_step': global_step
             }, model_filename)
+
+    for batch in train_dataloader:
+        print(batch['encoder_input'])
+        print(batch['decoder_input'])
+        print(batch['label'])
+        break
 
 
 if __name__ == "__main__":
