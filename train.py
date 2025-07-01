@@ -22,9 +22,6 @@ import torchmetrics
 from torch.utils.tensorboard import SummaryWriter
 from torch.cuda.amp import autocast, GradScaler
 
-# for distributed training
-import torch.distributed as dist
-import torch.multiprocessing as mp
 
 # simple greedy decode
 def greedy_decode(model, source, source_mask, tokenizer_src, tokenizer_tgt, max_len, device):
@@ -191,7 +188,7 @@ def run_validation(model, validation_ds, tokenizer_src, tokenizer_tgt, max_len, 
             predicted.append(model_out_text)
 
             # print the source, target, and model output
-            if count <= 3:  # Only print the first 3 examples
+            if count <= 3:  # Only print the first examples
                 print_msg('-'*console_width)
                 print_msg(f"{f'source: ' :>12}{source_text}")
                 print_msg(f"{f'target: ' :>12}{target_text}")
