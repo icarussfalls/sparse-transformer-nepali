@@ -26,7 +26,6 @@ from torch.cuda.amp import autocast, GradScaler
 import torch.distributed as dist
 import torch.multiprocessing as mp
 
-
 # simple greedy decode
 def greedy_decode(model, source, source_mask, tokenizer_src, tokenizer_tgt, max_len, device):
     sos_idx = tokenizer_tgt.piece_to_id("[SOS]")
@@ -279,8 +278,8 @@ def train_model(config):
     train_dataloader, val_dataloader, tokenizer_src, tokenizer_tgt = get_ds(config)
 
     model = get_model(config, tokenizer_src.get_piece_size(), tokenizer_tgt.get_piece_size())
-
-    # Use DataParallel only, NOT DistributedDataParallel
+    
+    # added gpu parallel support
     if torch.cuda.device_count() > 1 and device == "cuda":
         print("Using", torch.cuda.device_count(), "GPUs!")
         model = nn.DataParallel(model)
@@ -364,87 +363,8 @@ def train_model(config):
             }, model_filename)
 
 
-def train_model_ddp(rank, world_size, config):
-    dist.init_process_group("nccl", rank=rank, world_size=world_size)
-    torch.cuda.set_device(rank)
-    device = torch.device("cuda", rank)
-
-    Path(f"{config['data_source']}_{config['model_folder']}").mkdir(parents=True, exist_ok=True)
-
-    train_dataloader, val_dataloader, tokenizer_src, tokenizer_tgt = get_ds(config)
-
-    model = get_model(config, tokenizer_src.get_piece_size(), tokenizer_tgt.get_piece_size()).to(device)
-    model = nn.parallel.DistributedDataParallel(model, device_ids=[rank])
-
-    # Use DistributedSampler for your DataLoader
-    train_sampler = torch.utils.data.distributed.DistributedSampler(train_dataloader.dataset, num_replicas=world_size, rank=rank, shuffle=True)
-    train_dataloader = DataLoader(train_dataloader.dataset, batch_size=config['batch_size'], sampler=train_sampler)
-    # For validation, you can use a regular DataLoader or DistributedSampler
-
-    writer = SummaryWriter(config['experiment_name']) if rank == 0 else None
-    optimizer = torch.optim.Adam(model.parameters(), lr = config['lr'], eps=1e-9)
-    loss_fn = nn.CrossEntropyLoss(ignore_index=tokenizer_src.piece_to_id('[PAD]'), label_smoothing=0.1).to(device)
-    scaler = GradScaler() if device.type == "cuda" else None
-
-    initial_epoch = 0
-    global_step = 0
-
-    for epoch in range(initial_epoch, config['num_epochs']):
-        torch.cuda.empty_cache()
-        model.train()
-        train_sampler.set_epoch(epoch)
-        batch_iterator = tqdm(train_dataloader, desc=f'Processing epoch {epoch:02d}') if rank == 0 else train_dataloader
-
-        for batch in batch_iterator:
-            encoder_input = batch['encoder_input'].to(device)
-            decoder_input = batch['decoder_input'].to(device)
-            encoder_mask = batch['encoder_mask'].to(device)
-            decoder_mask = batch['decoder_mask'].to(device)
-            label = batch['label'].to(device)
-
-            optimizer.zero_grad(set_to_none=True)
-
-            if scaler is not None:
-                with autocast():
-                    proj_output = model(encoder_input, decoder_input, encoder_mask, decoder_mask)
-                    loss = loss_fn(proj_output.view(-1, tokenizer_tgt.get_piece_size()), label.view(-1))
-                scaler.scale(loss).backward()
-                scaler.step(optimizer)
-                scaler.update()
-            else:
-                proj_output = model(encoder_input, decoder_input, encoder_mask, decoder_mask)
-                loss = loss_fn(proj_output.view(-1, tokenizer_tgt.get_piece_size()), label.view(-1))
-                loss.backward()
-                optimizer.step()
-
-            if rank == 0:
-                batch_iterator.set_postfix({"loss": f"{loss.item():6.3f}"})
-                writer.add_scalar('train_loss', loss.item(), global_step)
-                writer.flush()
-            global_step += 1
-
-        if rank == 0:
-            run_validation(model, val_dataloader, tokenizer_src, tokenizer_tgt, config['seq_len'], device, lambda msg: batch_iterator.write(msg), global_step, writer)
-
-            if (epoch + 1) % 2 == 0 or (epoch + 1) == config['num_epochs']:
-                model_filename = get_weights_file_path(config, f"{epoch:02d}")
-                torch.save({
-                    'epoch': epoch,
-                    'model_state_dict': model.state_dict(),
-                    'optimizer_state_dict': optimizer.state_dict(),
-                    'global_step': global_step
-                }, model_filename)
-
-    dist.destroy_process_group()
-
-
 if __name__ == "__main__":
     warnings.filterwarnings("ignore")
     config = get_config()
-    world_size = torch.cuda.device_count()
-    # On Kaggle, always use single GPU
-    if world_size > 1 and not os.environ.get("KAGGLE_KERNEL_RUN_TYPE"):
-        mp.spawn(train_model_ddp, args=(world_size, config), nprocs=world_size)
-    else:
-        train_model(config)
+    train_model(config)
 
