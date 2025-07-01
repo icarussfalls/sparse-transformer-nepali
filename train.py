@@ -30,8 +30,8 @@ from torch.cuda.amp import autocast, GradScaler
 
 # simple greedy decode
 def greedy_decode(model, source, source_mask, tokenizer_src, tokenizer_tgt, max_len, device):
-    sos_idx = tokenizer_tgt.token_to_id("[SOS]")
-    eos_idx = tokenizer_tgt.token_to_id("[EOS]") 
+    sos_idx = tokenizer_tgt.piece_to_id("[SOS]")
+    eos_idx = tokenizer_tgt.piece_to_id("[EOS]") 
 
     # precomputing the encoder output and reusing it for each step
     # encoder_output = model.encode(source, source_mask)
@@ -272,7 +272,7 @@ def train_model(config):
 
     train_dataloader, val_dataloader, tokenizer_src, tokenizer_tgt = get_ds(config)
 
-    model = get_model(config, tokenizer_src.get_vocab_size(), tokenizer_tgt.get_vocab_size())
+    model = get_model(config, tokenizer_src.vocab_size(), tokenizer_tgt.vocab_size())
     
     # added gpu parallel support
     if torch.cuda.device_count() > 1 and device == "cuda":
@@ -306,7 +306,7 @@ def train_model(config):
     else:
         print(' No model to preload, starting from scratch')
 
-    loss_fn = nn.CrossEntropyLoss(ignore_index=tokenizer_src.token_to_id('[PAD]'), label_smoothing=0.1).to(device)
+    loss_fn = nn.CrossEntropyLoss(ignore_index=tokenizer_src.piece_to_id('[PAD]'), label_smoothing=0.1).to(device)
 
     scaler = GradScaler() if device == "cuda" else None
 
