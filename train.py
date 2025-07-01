@@ -83,18 +83,15 @@ def get_or_build_tokenizer(config, ds, lang):
     model_prefix = f"spm_{lang}"
     model_file = f"{model_prefix}.model"
     if not Path(model_file).exists():
-        # lets write sentences to the file
         with open(f"{model_prefix}_train.txt", "w") as f:
             for sentence in get_all_sentences(ds, lang):
                 f.write(sentence.strip() + "\n")
-        
-        # train sentencepiece model(unigram or use --model_type=bpe for bpe)
         spm.SentencePieceTrainer.Train(
             f"--input={model_prefix}_train.txt --model_prefix={model_prefix} --vocab_size=32000 --model_type=unigram --character_coverage=1.0"
         )
-        sp = spm.SentencePieceProcessor()
-        sp.load(model_file)
-        return sp
+    sp = spm.SentencePieceProcessor()
+    sp.load(model_file)
+    return sp
 
 def get_ds(config):
     # the data only has train split so
