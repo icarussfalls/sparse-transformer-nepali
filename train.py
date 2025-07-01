@@ -283,7 +283,7 @@ def train_model(config):
     # added gpu parallel support
     if torch.cuda.device_count() > 1 and device == "cuda":
         print("Using", torch.cuda.device_count(), "GPUs!")
-        model = nn.parallel.DistributedDataParallel(model)
+        model = nn.DataParallel(model)
 
     model = model.to(device)
     
