@@ -279,8 +279,8 @@ def train_model(config):
     train_dataloader, val_dataloader, tokenizer_src, tokenizer_tgt = get_ds(config)
 
     model = get_model(config, tokenizer_src.get_piece_size(), tokenizer_tgt.get_piece_size())
-    
-    # added gpu parallel support
+
+    # Use DataParallel only, NOT DistributedDataParallel
     if torch.cuda.device_count() > 1 and device == "cuda":
         print("Using", torch.cuda.device_count(), "GPUs!")
         model = nn.DataParallel(model)
