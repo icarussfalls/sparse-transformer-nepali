@@ -11,7 +11,9 @@ def get_config():
         'N': 8, # no of encoders/decoders,
         'h': 8, # no of heads
         'dropout': 0.1,
-        'use_sparse': True,          
+        'use_sparse': False,
+        'use_adaptive_sparse': False, 
+        'attn_type': "entmax_alpha", # entmax_alpha, entmax15, softmax|softmax is the vanilla option    
         'sparse_block_size': 64,
         'sparse_stride': 64,
         'data_source': 'sharad461/ne-en-parallel-208k',

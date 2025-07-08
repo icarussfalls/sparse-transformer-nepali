@@ -1,5 +1,6 @@
 from model import build_transformer
 from sparse_model import build_sparse_transformer
+from adaptive_sparse_model import build_adaptive_sparse_transformer
 from dataset import BilingualDataset, causal_mask
 from config import get_config, get_weights_file_path, latest_weight_file_path
 
@@ -143,6 +144,10 @@ def get_model(config, vocab_src_len, vocab_tgt_len):
     if config['use_sparse']:
         print('building sparse transformers')
         model = build_sparse_transformer(vocab_src_len, vocab_tgt_len, src_seq_len=config['seq_len'], tgt_seq_len=config['seq_len'], d_model = config['d_model'], N = config['N'], h=config['h'], dropout=config['dropout'], d_ff=config['d_ff'], block_size=config['sparse_block_size'], stride=config['sparse_stride'])
+        return model
+    if config['use_adaptive_sparse']:
+        print('building adaptive sparse model')
+        model = build_adaptive_sparse_transformer(vocab_src_len, vocab_tgt_len, src_seq_len=config['seq_len'], tgt_seq_len=config['seq_len'], d_model = config['d_model'], N = config['N'], h=config['h'], dropout=config['dropout'], d_ff=config['d_ff'], attn_type=config['attn_type'])
         return model
     model = build_transformer(vocab_src_len, vocab_tgt_len, src_seq_len=config['seq_len'], tgt_seq_len=config['seq_len'], d_model = config['d_model'], N = config['N'], h=config['h'], dropout=config['dropout'], d_ff=config['d_ff'])
     print('building vanilla transformers')

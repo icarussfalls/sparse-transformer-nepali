@@ -6,14 +6,45 @@ This repository contains a **fully custom implementation of a Transformer-based 
 
 ## What We Developed & Modified
 
-### 1. **Custom Transformer Architecture**
+### 1. **Custom Transformer Variants**
+- **Vanilla Transformer:**  
+  - Standard dense attention (softmax), as in Vaswani et al.
+- **Sparse Transformers:**  
+  - Block and strided sparse attention patterns for efficient long-sequence modeling.
+- **Adaptively Sparse Transformers:**  
+  - Implements [entmax15](https://arxiv.org/abs/1905.05702) and α-entmax ([learnable α per head](https://arxiv.org/abs/1909.00015)), allowing the model to learn the optimal sparsity pattern for each attention head.
 - **All modules implemented from scratch:**  
-  - InputEmbeddings, PositionalEncoding, MultiHeadAttentionBlock (with optional cross-head attention), FeedForward, LayerNormalization, Encoder/Decoder layers, and the final ProjectionLayer.
+  - InputEmbeddings, PositionalEncoding, MultiHeadAttentionBlock (with optional cross-head attention and sparse/entmax modes), FeedForward, LayerNormalization, Encoder/Decoder layers, and the final ProjectionLayer.
 - **Pre-norm residual connections** and careful tensor shape management for stability and clarity.
 - **Flexible configuration:**  
-  - Easily adjust model depth, width, number of heads, dropout, and sequence length via `config.py`.
+  - Easily adjust model depth, width, number of heads, dropout, sequence length, and **attention type** via `config.py`.
 
-### 2. **Data Handling & Preprocessing**
+---
+
+## How to Select Transformer Type
+
+In `config.py`, set the following flags to choose your model:
+
+```python
+# For vanilla transformer (softmax attention)
+'use_sparse': False,
+'use_adaptive_sparse': False,
+'attn_type': "softmax",
+
+# For sparse transformer (block/strided)
+'use_sparse': True,
+'use_adaptive_sparse': False,
+# (set block/stride params as needed)
+
+# For adaptively sparse transformer (entmax15 or entmax_alpha)
+'use_sparse': False,
+'use_adaptive_sparse': True,
+'attn_type': "entmax15",      # or "entmax_alpha"
+```
+
+---
+
+## Data Handling & Preprocessing
 - **Custom Dataset class (`dataset.py`):**  
   - Handles tokenization, padding, truncation, and special token management for both source and target languages.
   - Supports dynamic sequence length and batch size, and can easily be set to use only a fraction of the dataset for prototyping or debugging.
