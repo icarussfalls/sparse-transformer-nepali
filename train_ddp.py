@@ -8,7 +8,7 @@ os.environ["PYTHONWARNINGS"] = "ignore"
 # Add these new environment variables
 os.environ["NCCL_DEBUG"] = "NONE"  # Disable NCCL debugging
 os.environ["CUDA_MODULE_LOADING"] = "LAZY"
-os.environ["TORCH_DISTRIBUTED_DEBUG"] = "NONE"
+os.environ["TORCH_DISTRIBUTED_DEBUG"] = "OFF"  # Changed from "NONE" to "OFF"
 os.environ["TORCH_SHOW_CPP_STACKTRACES"] = "0"
 
 import torch
@@ -32,11 +32,17 @@ logging.getLogger("torch.nn.parallel").setLevel(logging.ERROR)
 logging.getLogger("torch.cuda").setLevel(logging.ERROR)
 logging.getLogger("torch.utils.data").setLevel(logging.ERROR)
 
-# Disable CUDA warnings in PyTorch
-torch.backends.cudnn.enabled = True
-torch.backends.cudnn.benchmark = True
-torch.backends.cuda.matmul.allow_tf32 = True
-torch.backends.cudnn.allow_tf32 = True
+# Silence warnings
+warnings.filterwarnings("ignore")
+logging.getLogger("torch").setLevel(logging.ERROR)
+logging.getLogger("torch.distributed").setLevel(logging.ERROR)
+os.environ["PYTHONWARNINGS"] = "ignore"
+
+# Set CUDA environment variables
+os.environ['CUDA_LAUNCH_BLOCKING'] = '1'
+os.environ['PYTORCH_CUDA_ALLOC_CONF'] = 'expandable_segments:True'
+os.environ["XLA_FLAGS"] = "--xla_gpu_cuda_data_dir=/usr/local/cuda"
+os.environ["TF_CPP_MIN_LOG_LEVEL"] = "3"  # Silence TensorFlow CUDA warnings
 
 def collate_fn(batch):
     """Convert list of samples to dictionary batch"""
@@ -140,13 +146,11 @@ def train_ddp(rank, world_size, config):
 
 def main():
     try:
-        # Additional CUDA initialization
-        torch.cuda.init()
-        torch.cuda.empty_cache()
-        
         # Disable CUDA warnings
-        torch._C._jit_set_profiling_mode(False)
-        torch._C._jit_set_profiling_executor(False)
+        torch.backends.cudnn.enabled = True
+        torch.backends.cudnn.benchmark = True
+        torch.backends.cuda.matmul.allow_tf32 = True
+        torch.backends.cudnn.allow_tf32 = True
         
         # Get config
         config = get_config()
