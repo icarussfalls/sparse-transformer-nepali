@@ -262,6 +262,8 @@ def run_validation(model, val_dataloader, tokenizer_src, tokenizer_tgt, seq_len,
     
     # Calculate corpus-level BLEU scores
     bleu_scores = {}
+    main_bleu = 0  # Initialize main_bleu with default value
+    
     if len(all_predictions) > 0 and len(all_references) > 0:
         smoothing = SmoothingFunction().method1
         try:
@@ -269,11 +271,14 @@ def run_validation(model, val_dataloader, tokenizer_src, tokenizer_tgt, seq_len,
             bleu_scores['BLEU-2'] = corpus_bleu(all_references, all_predictions, weights=(0.5, 0.5, 0, 0), smoothing_function=smoothing)
             bleu_scores['BLEU-3'] = corpus_bleu(all_references, all_predictions, weights=(0.33, 0.33, 0.33, 0), smoothing_function=smoothing)
             bleu_scores['BLEU-4'] = corpus_bleu(all_references, all_predictions, weights=(0.25, 0.25, 0.25, 0.25), smoothing_function=smoothing)
+            main_bleu = bleu_scores['BLEU-4']  # Set main_bleu after successful calculation
         except Exception as e:
             print(f"Error calculating BLEU: {e}")
             bleu_scores = {'BLEU-1': 0, 'BLEU-2': 0, 'BLEU-3': 0, 'BLEU-4': 0}
+            main_bleu = 0
     else:
         bleu_scores = {'BLEU-1': 0, 'BLEU-2': 0, 'BLEU-3': 0, 'BLEU-4': 0}
+        main_bleu = 0
     
     # Print validation summary (only on main process)
     if not torch.distributed.is_initialized() or torch.distributed.get_rank() == 0:
@@ -288,7 +293,6 @@ def run_validation(model, val_dataloader, tokenizer_src, tokenizer_tgt, seq_len,
             print(f"  {metric}: {score*100:.2f}%")
         
         # Highlight the main research metric
-        main_bleu = bleu_scores['BLEU-4']
         print(f"\n>>> Main Metric: Corpus BLEU-4 = {main_bleu*100:.2f}% <<<")
         
         print("\nSample Translations:")
