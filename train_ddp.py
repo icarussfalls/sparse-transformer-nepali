@@ -76,10 +76,9 @@ def train_ddp(rank, world_size, config):
         config['rank'] = rank
         config['world_size'] = world_size
         
-        # Call the main training function from train.py
-        # This will handle everything: data loading, model creation, training loop
-        from train import train_model_main
-        train_model_main(config)
+        # Just call train_model with config - it handles everything internally
+        from train import train_model
+        train_model(config)
     
     finally:
         cleanup()
