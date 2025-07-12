@@ -17,7 +17,8 @@ def get_config():
         'use_sparse': False,
         'use_adaptive_sparse': True, 
         'attn_type': "entmax_alpha",
-        'visualize': True, 
+        'visualize': False,  # Set to False for normal training
+        'visualize_frequency': 10,  # Only visualize every 10 epochs
         'sparse_block_size': 64,
         'sparse_stride': 64,
         'data_source': 'sharad461/ne-en-parallel-208k',

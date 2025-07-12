@@ -587,8 +587,8 @@ def train_model(config, model=None, train_dataloader=None, val_dataloader=None, 
             )
             print(f"Validation Loss: {val_loss:.4f}")
             
-            # ADD VISUALIZATION HERE - only if enabled in config
-            if config.get('visualize', False):
+            # ONLY run visualizations every 5-10 epochs, not every validation!
+            if config.get('visualize', False) and epoch % 10 == 0:  # Every 10 epochs only
                 try:
                     print("Generating visualizations...")
                     log_visualizations(
