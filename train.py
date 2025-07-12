@@ -84,7 +84,7 @@ def get_or_build_tokenizer(config, ds, lang):
     
     # Only main process builds the tokenizer
     if is_main_process and not tokenizer_path.exists():
-        print(f"Building SentencePiece tokenizer for {lang} on {len(ds)} samples...")
+        print(f"Building SentencePiece tokenizer for {lang}...")
         
         # Create temporary text file for training
         temp_file = f"temp_{lang}.txt"
@@ -93,11 +93,6 @@ def get_or_build_tokenizer(config, ds, lang):
                 text = item[lang].strip()
                 if text:  # Only add non-empty lines
                     f.write(text + '\n')
-        
-        # Verify temp file
-        with open(temp_file, 'r', encoding='utf-8') as f:
-            line_count = sum(1 for _ in f)
-            print(f"Tokenizer training file for {lang}: {line_count} lines")
         
         # Train SentencePiece model
         spm.SentencePieceTrainer.train(
@@ -277,10 +272,14 @@ def get_ds(config):
         if len(overlap) > 0:
             print("ERROR: Data leakage detected!")
             raise ValueError("Training and validation sets overlap!")
+        
+        print("Main process finished building tokenizers and preparing data")
     
-    # Wait for main process to finish
+    # CRITICAL: Wait for main process to finish building tokenizers
     if torch.distributed.is_initialized():
+        print(f"Process {rank} waiting for main process to finish...")
         torch.distributed.barrier()
+        print(f"Process {rank} proceeding after barrier...")
     
     # ALL PROCESSES: Load the same data splits
     if not is_main_process:
@@ -296,12 +295,13 @@ def get_ds(config):
     train_ds_raw = ds_all.select(train_indices)
     val_ds_raw = ds_all.select(val_indices)
     
-    # ALL PROCESSES: Load tokenizers (main process built them, others load existing)
+    # ALL PROCESSES: Load tokenizers
     if not is_main_process:
+        print(f"Process {rank} loading existing tokenizers...")
         # Load existing tokenizer files
         tokenizer_src = load_existing_tokenizer(config['lang_src'])
         tokenizer_tgt = load_existing_tokenizer(config['lang_tgt'])
-    # Note: Main process already has tokenizers from above
+    # Main process already has tokenizers from above
     
     # Create BilingualDataset objects
     train_ds = BilingualDataset(train_ds_raw, tokenizer_src, tokenizer_tgt, 
@@ -350,15 +350,6 @@ def get_ds(config):
     
     return train_dataloader, val_dataloader, tokenizer_src, tokenizer_tgt
 
-def load_existing_tokenizer(lang):
-    """Load existing tokenizer for non-main processes"""
-    tokenizer_path = Path(f"tokenizer_{lang}.model")
-    if not tokenizer_path.exists():
-        raise FileNotFoundError(f"Tokenizer not found: {tokenizer_path}")
-    
-    sp = spm.SentencePieceProcessor()
-    sp.load(str(tokenizer_path))
-    return SentencePieceTokenizer(sp)
 
 def get_model(config, vocab_src_len, vocab_tgt_len):
     # (src_vocab_size: int, tgt_vocab_size: int, src_seq_len: int, tgt_seq_len: int, d_model: int, N: int, h: int, dropout: float, d_ff: int = None
@@ -764,4 +755,27 @@ def translate_sample(model, tokenizer_src, tokenizer_tgt, device, print_msg, max
     
     print_msg(f"Translation: {translated_text}\n")
     model.train()
+
+def load_existing_tokenizer(lang):
+    """Load existing tokenizer for non-main processes"""
+    import time
+    
+    tokenizer_path = Path(f"tokenizer_{lang}.model")
+    
+    # Wait for tokenizer to be created (max 60 seconds)
+    max_wait = 60
+    waited = 0
+    while not tokenizer_path.exists() and waited < max_wait:
+        print(f"Waiting for tokenizer {tokenizer_path}... ({waited}s)")
+        time.sleep(1)
+        waited += 1
+    
+    if not tokenizer_path.exists():
+        raise FileNotFoundError(f"Tokenizer not found after waiting: {tokenizer_path}")
+    
+    # Load the tokenizer
+    sp = spm.SentencePieceProcessor()
+    sp.load(str(tokenizer_path))
+    
+    return SentencePieceTokenizer(sp)
 
