@@ -568,7 +568,12 @@ def train_model(config, model=None, train_dataloader=None, val_dataloader=None, 
             print(f"Average Training Loss: {avg_loss:.4f}")
             print(f"Learning Rate: {scheduler.get_last_lr()[0]:.6f}")
             print_gpu_memory()
-        
+            
+            # Log to tensorboard
+            if writer:
+                writer.add_scalar('train/loss', avg_loss, epoch)
+                writer.add_scalar('train/lr', scheduler.get_last_lr()[0], epoch)
+    
         # Run validation - only on main process
         if epoch % 2 == 0 and is_main_process:
             val_loss = run_validation(
@@ -578,6 +583,21 @@ def train_model(config, model=None, train_dataloader=None, val_dataloader=None, 
                 global_step, writer, loss_fn
             )
             print(f"Validation Loss: {val_loss:.4f}")
+            
+            # ADD VISUALIZATION HERE - only if enabled in config
+            if config.get('visualize', False):
+                try:
+                    print("Generating visualizations...")
+                    log_visualizations(
+                        model, 
+                        tokenizer_src, 
+                        tokenizer_tgt, 
+                        global_step, 
+                        save_dir=f"visualizations/{config['experiment_name']}"
+                    )
+                    print("Visualizations saved!")
+                except Exception as e:
+                    print(f"Error generating visualizations: {e}")
             
             # Save model checkpoint - only main process
             model_filename = get_weights_file_path(config, f"{epoch:02d}")

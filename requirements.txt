@@ -5,6 +5,7 @@ torchmetrics
 datasets
 tokenizers
 tqdm
+sentencepiece
 tensorboard
 matplotlib
 seaborn

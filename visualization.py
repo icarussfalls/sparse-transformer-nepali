@@ -71,15 +71,15 @@ def visualize_attention_patterns(model, tokenizer_src, tokenizer_tgt, sample_tex
 
     # plot attention patterns
     for layer_idx, attn in enumerate(attention_patterns):
-        attn = attn[0] # this removes batch dimention
-        n_heads = attn.size[0]
+        attn = attn[0] # this removes batch dimension
+        n_heads = attn.size(0)  # Fixed: was .size[0]
 
-        fig, axes = plt.subplot(2, n_heads//2, figsize=(15,8))
+        fig, axes = plt.subplots(2, n_heads//2, figsize=(15,8))  # Fixed: was .subplot
         axes = axes.flat
     
         for head_idx in range(n_heads):
             sns.heatmap(attn[head_idx], ax=axes[head_idx], cmap='viridis')
-            axes[head_idx].set_titile(f'Head {head_idx}')
+            axes[head_idx].set_title(f'Head {head_idx}')  # Fixed: was .set_titile
 
         plt.suptitle(f'Layer {layer_idx} Attention Patterns')
         plt.tight_layout()

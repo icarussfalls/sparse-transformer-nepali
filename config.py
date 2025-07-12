@@ -2,9 +2,9 @@ from pathlib import Path
 
 def get_config():
     return {
-        'batch_size': 64,  # Doubled from 32
-        'val_batch_size': 64,  # Match training batch size
-        'gradient_accumulation_steps': 1,  # Reduced from 2 - update weights every step
+        'batch_size': 64,
+        'val_batch_size': 64,
+        'gradient_accumulation_steps': 1,  # update weights every step
         'gradient_checkpointing': False,  # Keep disabled for speed
         'num_epochs' : 20,
         'lr': 10**-4,
