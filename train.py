@@ -30,6 +30,11 @@ import torchmetrics
 from torch.utils.tensorboard import SummaryWriter
 from torch.cuda.amp import autocast, GradScaler
 
+import logging
+# Suppress SentencePiece verbose logs
+os.environ['SENTENCEPIECE_MINLOGLEVEL'] = '2'
+logging.getLogger('sentencepiece').setLevel(logging.ERROR)
+
 
 # simple greedy decode
 def greedy_decode(model, source, source_mask, tokenizer_src, tokenizer_tgt, max_len, device):
@@ -70,10 +75,15 @@ def get_all_sentences(ds, lang):
         yield item[lang]
 
 def get_or_build_tokenizer(config, ds, lang):
-    """Build or load SentencePiece tokenizer"""
+    """Build or load SentencePiece tokenizer - distributed training safe"""
     tokenizer_path = Path(f"tokenizer_{lang}.model")
     
-    if not tokenizer_path.exists():
+    # Check if we're in distributed mode
+    is_distributed = torch.distributed.is_initialized()
+    is_main_process = not is_distributed or torch.distributed.get_rank() == 0
+    
+    # Only main process builds the tokenizer
+    if is_main_process and not tokenizer_path.exists():
         print(f"Building SentencePiece tokenizer for {lang}...")
         
         # Create temporary text file for training
@@ -88,8 +98,8 @@ def get_or_build_tokenizer(config, ds, lang):
         spm.SentencePieceTrainer.train(
             input=temp_file,
             model_prefix=f"tokenizer_{lang}",
-            vocab_size=16000,  # Smaller vocab for faster training
-            character_coverage=0.9995,  # Good for multilingual
+            vocab_size=16000,
+            character_coverage=0.9995,
             model_type='bpe',
             pad_id=0,
             eos_id=1,
@@ -101,14 +111,23 @@ def get_or_build_tokenizer(config, ds, lang):
             bos_piece='[SOS]',
             user_defined_symbols=['[MASK]'],
             max_sentence_length=4192,
-            shuffle_input_sentence=True
+            shuffle_input_sentence=True,
+            minloglevel=2  # Suppress verbose logs
         )
         
         # Clean up temp file
-        os.remove(temp_file)
+        if os.path.exists(temp_file):
+            os.remove(temp_file)
         print(f"SentencePiece tokenizer saved to {tokenizer_path}")
     
-    # Load the tokenizer
+    # Wait for main process to finish building tokenizer
+    if is_distributed:
+        torch.distributed.barrier()
+    
+    # All processes load the tokenizer
+    if not tokenizer_path.exists():
+        raise FileNotFoundError(f"Tokenizer not found: {tokenizer_path}")
+    
     sp = spm.SentencePieceProcessor()
     sp.load(str(tokenizer_path))
     
