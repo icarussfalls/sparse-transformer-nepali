@@ -2,9 +2,9 @@ from pathlib import Path
 
 def get_config():
     return {
-        'batch_size': 64,  # Increased from 16
-        'val_batch_size': 64,  # NEW: Set validation batch size
-        'gradient_accumulation_steps': 2,  # Reduced from 4
+        'batch_size': 16, 
+        'val_batch_size': 16,  
+        'gradient_accumulation_steps': 4,  # Reduced from 4
         'gradient_checkpointing': True,
         'num_epochs' : 20,
         'lr': 10**-4,
