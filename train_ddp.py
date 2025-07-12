@@ -1,48 +1,48 @@
 import os
+import sys
+import contextlib
+
+# Redirect stderr to suppress CUDA warnings
+@contextlib.contextmanager
+def suppress_cuda_warnings():
+    with open(os.devnull, 'w') as devnull:
+        old_stderr = sys.stderr
+        sys.stderr = devnull
+        try:
+            yield
+        finally:
+            sys.stderr = old_stderr
+
 # Set environment variables before other imports
 os.environ["CUDA_LAUNCH_BLOCKING"] = "1"
 os.environ["PYTORCH_CUDA_ALLOC_CONF"] = "expandable_segments:True"
 os.environ["XLA_FLAGS"] = "--xla_gpu_cuda_data_dir=/usr/local/cuda"
 os.environ["TF_CPP_MIN_LOG_LEVEL"] = "3"
 os.environ["PYTHONWARNINGS"] = "ignore"
-# Add these new environment variables
-os.environ["NCCL_DEBUG"] = "NONE"  # Disable NCCL debugging
+os.environ["NCCL_DEBUG"] = "NONE"
 os.environ["CUDA_MODULE_LOADING"] = "LAZY"
-os.environ["TORCH_DISTRIBUTED_DEBUG"] = "OFF"  # Changed from "NONE" to "OFF"
+os.environ["TORCH_DISTRIBUTED_DEBUG"] = "OFF"
 os.environ["TORCH_SHOW_CPP_STACKTRACES"] = "0"
 
-import torch
-import torch.distributed as dist
-import torch.multiprocessing as mp
-from torch.nn.parallel import DistributedDataParallel as DDP
-from torch.utils.data.distributed import DistributedSampler
-from torch.utils.data import DataLoader
+# Import torch with suppressed warnings
+with suppress_cuda_warnings():
+    import torch
+    import torch.distributed as dist
+    import torch.multiprocessing as mp
+    from torch.nn.parallel import DistributedDataParallel as DDP
+    from torch.utils.data.distributed import DistributedSampler
+    from torch.utils.data import DataLoader
+
 from train import get_model, get_ds, train_model
 from config import get_config
 import warnings
 import logging
 
-# Configure logging more aggressively
+# Configure logging
 logging.basicConfig(level=logging.ERROR)
-warnings.filterwarnings("ignore", category=UserWarning)
-warnings.filterwarnings("ignore", category=FutureWarning)
-logging.getLogger("torch").setLevel(logging.ERROR)
-logging.getLogger("torch.distributed").setLevel(logging.ERROR)
-logging.getLogger("torch.nn.parallel").setLevel(logging.ERROR)
-logging.getLogger("torch.cuda").setLevel(logging.ERROR)
-logging.getLogger("torch.utils.data").setLevel(logging.ERROR)
-
-# Silence warnings
 warnings.filterwarnings("ignore")
-logging.getLogger("torch").setLevel(logging.ERROR)
-logging.getLogger("torch.distributed").setLevel(logging.ERROR)
-os.environ["PYTHONWARNINGS"] = "ignore"
-
-# Set CUDA environment variables
-os.environ['CUDA_LAUNCH_BLOCKING'] = '1'
-os.environ['PYTORCH_CUDA_ALLOC_CONF'] = 'expandable_segments:True'
-os.environ["XLA_FLAGS"] = "--xla_gpu_cuda_data_dir=/usr/local/cuda"
-os.environ["TF_CPP_MIN_LOG_LEVEL"] = "3"  # Silence TensorFlow CUDA warnings
+for logger_name in ['torch', 'torch.distributed', 'torch.nn.parallel', 'torch.cuda', 'torch.utils.data']:
+    logging.getLogger(logger_name).setLevel(logging.ERROR)
 
 def collate_fn(batch):
     """Convert list of samples to dictionary batch"""
@@ -58,8 +58,9 @@ def setup(rank, world_size):
     """Initialize distributed training environment"""
     os.environ['MASTER_ADDR'] = '127.0.0.1'
     os.environ['MASTER_PORT'] = '12355'
-    dist.init_process_group("nccl", rank=rank, world_size=world_size)
-    torch.cuda.set_device(rank)
+    with suppress_cuda_warnings():
+        dist.init_process_group("nccl", rank=rank, world_size=world_size)
+        torch.cuda.set_device(rank)
 
 def cleanup():
     """Clean up distributed training environment"""
@@ -67,7 +68,7 @@ def cleanup():
 
 def train_ddp(rank, world_size, config):
     try:
-        # Initialize distributed training
+        # Initialize distributed training with suppressed warnings
         setup(rank, world_size)
         
         # Get data and model
@@ -78,7 +79,8 @@ def train_ddp(rank, world_size, config):
         
         # Enable gradient checkpointing if configured
         if config['gradient_checkpointing']:
-            print(f"Rank {rank}: Enabling gradient checkpointing")
+            if rank == 0:  # Only print from rank 0
+                print(f"Enabling gradient checkpointing")
             model.gradient_checkpointing_enable()
             
         model = model.to(rank)
@@ -105,7 +107,7 @@ def train_ddp(rank, world_size, config):
             prefetch_factor=3,
             persistent_workers=True,
             drop_last=True,
-            collate_fn=collate_fn  # Use the moved collate function
+            collate_fn=collate_fn
         )
         
         # Create validation dataloader with DDP
@@ -113,7 +115,7 @@ def train_ddp(rank, world_size, config):
             val_dataloader.dataset,
             num_replicas=world_size,
             rank=rank,
-            shuffle=False  # No need to shuffle validation
+            shuffle=False
         )
         
         val_dataloader = DataLoader(
@@ -125,7 +127,7 @@ def train_ddp(rank, world_size, config):
             prefetch_factor=3,
             persistent_workers=True,
             drop_last=True,
-            collate_fn=collate_fn  # Add custom collate function
+            collate_fn=collate_fn
         )
         
         # Enable cudNN benchmarking for better performance
@@ -142,7 +144,7 @@ def train_ddp(rank, world_size, config):
         )
     
     finally:
-        cleanup()  # Ensure cleanup happens even if training fails
+        cleanup()
 
 def main():
     try:
