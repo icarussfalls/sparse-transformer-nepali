@@ -13,17 +13,10 @@ class BilingualDataset(Dataset):
         self.src_lang = src_lang
         self.tgt_lang = tgt_lang
         
-        # Special tokens - handle both SentencePiece and WordLevel tokenizers
-        if hasattr(tokenizer_tgt, 'token_to_id'):
-            # SentencePiece tokenizer
-            self.sos_token = tokenizer_tgt.token_to_id('[SOS]')
-            self.eos_token = tokenizer_tgt.token_to_id('[EOS]')
-            self.pad_token = tokenizer_tgt.token_to_id('[PAD]')
-        else:
-            # WordLevel tokenizer
-            self.sos_token = tokenizer_tgt.token_to_id('[SOS]')
-            self.eos_token = tokenizer_tgt.token_to_id('[EOS]')
-            self.pad_token = tokenizer_tgt.token_to_id('[PAD]')
+        # Special tokens for SentencePiece tokenizers
+        self.sos_token = tokenizer_tgt.token_to_id('[SOS]')
+        self.eos_token = tokenizer_tgt.token_to_id('[EOS]')
+        self.pad_token = tokenizer_tgt.token_to_id('[PAD]')
         
     def __len__(self):
         return len(self.ds)
@@ -37,7 +30,7 @@ class BilingualDataset(Dataset):
         enc_input_tokens = self.tokenizer_src.encode(src_text).ids
         dec_input_tokens = self.tokenizer_tgt.encode(tgt_text).ids
         
-        # Add SOS and EOS tokens to decoder input and label
+        # Add SOS and EOS tokens
         dec_input_tokens = [self.sos_token] + dec_input_tokens
         label = dec_input_tokens + [self.eos_token]
         
@@ -46,16 +39,21 @@ class BilingualDataset(Dataset):
         dec_input_tokens = self._pad_or_truncate(dec_input_tokens, self.seq_len)
         label = self._pad_or_truncate(label, self.seq_len)
         
-        # Create attention masks
-        encoder_mask = (torch.tensor(enc_input_tokens) != self.pad_token).unsqueeze(0).int()
-        decoder_mask = self._create_decoder_mask(torch.tensor(dec_input_tokens))
+        # Convert to tensors
+        enc_input_tensor = torch.tensor(enc_input_tokens, dtype=torch.long)
+        dec_input_tensor = torch.tensor(dec_input_tokens, dtype=torch.long)
+        label_tensor = torch.tensor(label, dtype=torch.long)
+        
+        # Create masks with correct dimensions
+        encoder_mask = (enc_input_tensor != self.pad_token).unsqueeze(0).unsqueeze(0).int()  # (1, 1, seq_len)
+        decoder_mask = self._create_causal_mask(dec_input_tensor)  # (1, seq_len, seq_len)
         
         return {
-            'encoder_input': torch.tensor(enc_input_tokens, dtype=torch.long),
-            'decoder_input': torch.tensor(dec_input_tokens, dtype=torch.long),
+            'encoder_input': enc_input_tensor,
+            'decoder_input': dec_input_tensor,
             'encoder_mask': encoder_mask,
             'decoder_mask': decoder_mask,
-            'label': torch.tensor(label, dtype=torch.long),
+            'label': label_tensor,
             'src_text': src_text,
             'tgt_text': tgt_text,
         }
@@ -67,12 +65,20 @@ class BilingualDataset(Dataset):
         else:
             return tokens + [self.pad_token] * (max_len - len(tokens))
     
-    def _create_decoder_mask(self, decoder_input):
-        """Create causal mask for decoder"""
+    def _create_causal_mask(self, decoder_input):
+        """Create causal mask for decoder with correct dimensions"""
         seq_len = decoder_input.size(0)
-        decoder_mask = torch.triu(torch.ones(1, seq_len, seq_len), diagonal=1).int()
-        decoder_mask = decoder_mask == 0
-        return decoder_mask & (decoder_input != self.pad_token).unsqueeze(0).unsqueeze(0)
+        
+        # Create causal mask (upper triangular)
+        causal_mask = torch.triu(torch.ones(seq_len, seq_len), diagonal=1) == 0
+        
+        # Create padding mask
+        pad_mask = (decoder_input != self.pad_token).unsqueeze(0)  # (1, seq_len)
+        
+        # Combine masks: causal AND not padding
+        combined_mask = causal_mask.unsqueeze(0) & pad_mask.unsqueeze(1)  # (1, seq_len, seq_len)
+        
+        return combined_mask.int()
 
 def causal_mask(size):
     """Create causal mask for decoder"""
