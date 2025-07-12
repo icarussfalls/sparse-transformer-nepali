@@ -270,22 +270,21 @@ def train_model(config, model=None, train_dataloader=None, val_dataloader=None, 
     # Create optimizer and scheduler
     optimizer = torch.optim.Adam(model.parameters(), lr=config['lr'], eps=1e-9)
     
-    def get_lr_scheduler(optimizer, d_model, warmup_steps=4000):
-        """
-        Implements the learning rate schedule from the Transformer paper:
-        lrate = d_model^(-0.5) * min(step_num^(-0.5), step_num * warmup_steps^(-1.5))
-        """
-        def lr_lambda(current_step):
-            # Warmup + decay schedule
-            current_step = max(1, current_step)  # Prevent division by zero
-            factor = d_model ** (-0.5)
-            return factor * min(
-                current_step ** (-0.5),
-                current_step * warmup_steps ** (-1.5)
-            )
-        
-        return LambdaLR(optimizer, lr_lambda)
-    scheduler = get_lr_scheduler(optimizer, config['d_model'])
+    # Use a simpler, more reliable scheduler
+    scheduler = torch.optim.lr_scheduler.OneCycleLR(
+        optimizer, 
+        max_lr=config['lr'], 
+        steps_per_epoch=len(train_dataloader) // config['gradient_accumulation_steps'],
+        epochs=config['num_epochs'],
+        pct_start=0.1,  # 10% warmup
+        anneal_strategy='cos'
+    )
+    
+    # Alternative: Use a constant learning rate with warmup
+    # scheduler = torch.optim.lr_scheduler.LambdaLR(
+    #     optimizer, 
+    #     lr_lambda=lambda step: min(1.0, step / 1000)  # Warmup for 1000 steps
+    # )
 
     # Initialize epoch and global_step
     initial_epoch = 0
@@ -305,32 +304,32 @@ def train_model(config, model=None, train_dataloader=None, val_dataloader=None, 
         model.load_state_dict(new_state_dict)
         initial_epoch = state['epoch'] + 1
         global_step = state.get('global_step', 0)
-        if 'scheduler_state_dict' in state:
-            scheduler.load_state_dict(state['scheduler_state_dict'])
+        # Don't load scheduler state to avoid LR issues
+        print(f"Resuming from epoch {initial_epoch}, global step {global_step}")
     else:
         print('No model to preload, starting from scratch')
 
     loss_fn = nn.CrossEntropyLoss(ignore_index=tokenizer_src.token_to_id('[PAD]'), label_smoothing=0.1).to(device)
 
-    scaler = GradScaler() if device == "cuda" else None
+    scaler = GradScaler() if device.type == "cuda" else None
 
     for epoch in range(initial_epoch, config['num_epochs']):
         model.train()
         epoch_loss = 0
         num_batches = 0
-        accumulated_loss = 0  # Add this line - initialize accumulated_loss
+        accumulated_loss = 0
         
         batch_iterator = tqdm(train_dataloader, desc=f"Processing epoch {epoch:02d}")
         
         for i, batch in enumerate(batch_iterator):
-            # Move to GPU and clear previous gradients
+            # Move to GPU
             encoder_input = batch['encoder_input'].to(device, non_blocking=True)
             decoder_input = batch['decoder_input'].to(device, non_blocking=True)
             encoder_mask = batch['encoder_mask'].to(device, non_blocking=True)
             decoder_mask = batch['decoder_mask'].to(device, non_blocking=True)
             label = batch['label'].to(device, non_blocking=True)
 
-            # Forward pass with memory optimization
+            # Forward pass with mixed precision
             if scaler is not None:
                 with autocast():
                     proj_output = model(encoder_input, decoder_input, encoder_mask, decoder_mask)
@@ -341,12 +340,13 @@ def train_model(config, model=None, train_dataloader=None, val_dataloader=None, 
                 scaler.scale(loss).backward()
                 accumulated_loss += loss.item()
 
-                # Update weights if we've accumulated enough steps
+                # Update weights after accumulation
                 if (i + 1) % config['gradient_accumulation_steps'] == 0:
-                    # Unscale gradients for any gradient clipping
+                    # Unscale and clip gradients
                     scaler.unscale_(optimizer)
                     torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm=1.0)
                     
+                    # Update optimizer and scheduler
                     scaler.step(optimizer)
                     scaler.update()
                     scheduler.step()
@@ -364,7 +364,7 @@ def train_model(config, model=None, train_dataloader=None, val_dataloader=None, 
                         'lr': f"{current_lr:.6f}"
                     })
                     
-                    accumulated_loss = 0  # Reset after each step
+                    accumulated_loss = 0
                     global_step += 1
             else:
                 # CPU training path

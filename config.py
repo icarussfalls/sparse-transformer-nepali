@@ -8,10 +8,10 @@ def get_config():
         'gradient_checkpointing': False,  # Keep disabled for speed
         'num_epochs' : 20,
         'lr': 10**-4,
-        'seq_len': 200,  # Reduced from 256 - shorter sequences = faster
+        'seq_len': 200,
         'd_model' : 512,
         'd_ff' : 2048,
-        'N': 4,  # Reduced from 6 layers - smaller model = faster
+        'N': 4, 
         'h': 4,
         'dropout': 0.1,
         'use_sparse': False,
