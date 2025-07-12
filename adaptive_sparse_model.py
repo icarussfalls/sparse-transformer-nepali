@@ -53,81 +53,93 @@ class PositionalEncoding(nn.Module):
 # w_q, w_k, w_v, w_o are linear layers that project the input vectors to queries, keys, values, and outputs resp.
 
 class MultiHeadAttentionBlock(nn.Module):
-    def __init__(self, d_model: int, h: int, dropout: float, attn_type: str = "entmax15") -> None:
-        """
-        attn_type: "softmax", "entmax15", or "entmax_alpha"
-        """
+    def __init__(self, d_model, h, dropout, attn_type="softmax"):
         super().__init__()
-
-        self.d_model = d_model # embedding vector size
-        self.h = h # number of heads
-        # making sure d_model is divisible by h
-        assert d_model % h == 0, "d_model is not divisible by h"
-
-        self.d_k = d_model // h # dimension of the vector seen by each head
-        self.w_q = nn.Linear(d_model, d_model, bias=False) # Wq
-        self.w_k = nn.Linear(d_model, d_model, bias=False) # Wk
-        self.w_v = nn.Linear(d_model, d_model, bias=False) # Wv
-        self.w_o = nn.Linear(d_model, d_model, bias=False) # Wo
-        self.dropout = nn.Dropout(dropout)
+        self.d_model = d_model
+        self.h = h
+        self.d_k = d_model // h
+        self.dropout = dropout
         self.attn_type = attn_type
-
-        # For alpha-entmax: one learnable alpha per head, initialized to 1.5 (entmax15)
+        
+        assert d_model % h == 0
+        
+        self.w_q = nn.Linear(d_model, d_model, bias=False)
+        self.w_k = nn.Linear(d_model, d_model, bias=False)
+        self.w_v = nn.Linear(d_model, d_model, bias=False)
+        self.w_o = nn.Linear(d_model, d_model, bias=False)
+        self.dropout = nn.Dropout(dropout)
+        
+        # Fix alpha parameter initialization
         if attn_type == "entmax_alpha":
-            self.alpha = nn.Parameter(torch.ones(h) * 1.5)
-
+            # Initialize alpha as 1D tensor with shape (h,) - one per head
+            self.alpha = nn.Parameter(torch.ones(h) * 1.5)  # Shape: (h,)
+        else:
+            self.alpha = None
+            
+        # Store last attention weights for visualization
+        self.last_attention_weights = None
+    
     def forward(self, q, k, v, mask):
         B, L, _ = q.size()
-        query = self.w_q(q) # (batch, seq_len, d_model) -> (batch, seq_len, d_model)
-        key = self.w_k(k) # (batch, seq_len, d_model) -> (batch, seq_len, d_model)
-        value = self.w_v(v) # (batch, seq_len, d_model) -> (batch, seq_len, d_model)
+        query = self.w_q(q)
+        key = self.w_k(k)
+        value = self.w_v(v)
 
-        # need to accomodate h here
-        # (batch, seq_len, d_model) -> (batch, seq_len, h, d_k) -> (batch, h, seq_len, dk)
-        query = query.view(query.shape[0], query.shape[1], self.h, self.d_k).transpose(1, 2) 
-        key = key.view(key.shape[0], key.shape[1], self.h, self.d_k).transpose(1, 2)
-        value = value.view(value.shape[0], value.shape[1], self.h, self.d_k).transpose(1, 2)
+        # Reshape for multi-head attention
+        query = query.view(B, L, self.h, self.d_k).transpose(1, 2)  # (B, h, L, d_k)
+        key = key.view(B, L, self.h, self.d_k).transpose(1, 2)      # (B, h, L, d_k)
+        value = value.view(B, L, self.h, self.d_k).transpose(1, 2)  # (B, h, L, d_k)
 
-        attn_scores = (query @ key.transpose(-2, -1)) / math.sqrt(self.d_k) # (B, h, L, L)
+        attn_scores = (query @ key.transpose(-2, -1)) / math.sqrt(self.d_k)  # (B, h, L, L)
 
         if mask is not None:
-            # mask should be (batch, heads, seq_len, seq_len) or (batch, 1, seq_len, seq_len)
-            if mask.dim() == 3:  # (batch, seq_len, seq_len)
-                mask = mask.unsqueeze(1)  # Add head dimension
-            elif mask.dim() == 2:  # (seq_len, seq_len)
-                mask = mask.unsqueeze(0).unsqueeze(0)  # Add batch and head dimensions
+            # Handle mask shapes
+            if mask.dim() == 3:
+                mask = mask.unsqueeze(1)
+            elif mask.dim() == 2:
+                mask = mask.unsqueeze(0).unsqueeze(0)
             
             # Ensure mask matches attention scores shape
             if mask.size(-1) != attn_scores.size(-1):
-                print(f"Mask shape: {mask.shape}, Attention shape: {attn_scores.shape}")
-                # Handle shape mismatch
-                mask = mask[..., :attn_scores.size(-1)]  # Truncate if needed
+                mask = mask[..., :attn_scores.size(-1)]
             
             attn_scores = attn_scores.masked_fill(mask == 0, torch.finfo(attn_scores.dtype).min)
 
-        # adaptive sparse transformers
+        # Apply attention mechanism
         if self.attn_type == "softmax":
             attn_probs = F.softmax(attn_scores, dim=-1)
         elif self.attn_type == "entmax15":
             attn_probs = entmax15(attn_scores, dim=-1)
         elif self.attn_type == "entmax_alpha":
-            # alpha entmax, we are using different alpha for each head
-            attn_probs = []
-            for head in range(self.h):
-                # entmax_bisects needs (B, L, L)
-                attn_probs.append(entmax_bisect(attn_scores[:, head], alpha=self.alpha[head], dim=-1))
-            attn_probs = torch.stack(attn_probs, dim=1) # (B, h, L, L)
-
+            # Clamp alpha to prevent extreme values
+            alpha = torch.clamp(self.alpha, min=1.001, max=10.0)
+            alpha = alpha.view(1, -1, 1, 1)  # (1, h, 1, 1)
+            attn_probs = entmax_bisect(attn_scores, alpha, dim=-1)
+            
+            # Check for NaN
+            if torch.isnan(attn_probs).any():
+                print("NaN detected in attention probabilities!")
+                attn_probs = F.softmax(attn_scores, dim=-1)  # Fallback to softmax
         else:
-            raise ValueError(f"Unknown attn_type: {self.attn_type}")
+            raise ValueError(f"Unknown attention type: {self.attn_type}")
 
+        # Store attention weights for visualization (only during eval)
+        if not self.training:
+            self.last_attention_weights = attn_probs.detach()
+
+        # Apply dropout
         attn_probs = self.dropout(attn_probs)
-        x = attn_probs @ value  # (B, h, L, d_k)
-        x = x.transpose(1, 2).contiguous().view(B, L, self.h * self.d_k)
-    
-        # multiply by Wo
-        # (batch, seq_len, d_model) -> (batch, seq_len, d_model)
-        return self.w_o(x)
+
+        # Apply attention to values
+        out = attn_probs @ value  # (B, h, L, d_k)
+        
+        # Concatenate heads
+        out = out.transpose(1, 2).contiguous().view(B, L, self.d_model)  # (B, L, d_model)
+        
+        # Apply output projection
+        out = self.w_o(out)
+        
+        return out
 
 
 # alpha is the learnable parameter initialized to one of shape (features,) which scales the normalized outputs

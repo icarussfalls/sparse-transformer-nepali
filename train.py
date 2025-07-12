@@ -192,71 +192,130 @@ class TokenizedResult:
         self.ids = ids
 
 def get_ds(config):
-    # Different random seed per process
+    # Only main process should handle data preparation
     if torch.distributed.is_initialized():
         rank = torch.distributed.get_rank()
-        torch.manual_seed(42 + rank)  # Different seed per process
+        world_size = torch.distributed.get_world_size()
+        is_main_process = rank == 0
     else:
-        torch.manual_seed(42)
+        rank = 0
+        world_size = 1
+        is_main_process = True
     
     # Load dataset
     ds_all = load_dataset(f"{config['data_source']}", "default", split='train')
     
-    # Each process gets different subset
-    total_len = len(ds_all)
-    subset_size = int(0.1 * total_len)
-    indices = torch.randperm(total_len).tolist()[:subset_size]
-    ds_raw = ds_all.select(indices)
+    # MAIN PROCESS: Prepare data splits and save indices
+    if is_main_process:
+        print(f"Main process preparing dataset...")
+        
+        # Select subset and create consistent splits
+        total_len = len(ds_all)
+        subset_size = int(0.01 * total_len)
+        
+        # Fixed seed for reproducible selection
+        torch.manual_seed(42)
+        all_indices = torch.randperm(total_len).tolist()
+        
+        # Take first subset_size indices
+        subset_indices = all_indices[:subset_size]
+        
+        # Split subset into train/val
+        train_size = int(len(subset_indices) * 0.9)
+        train_indices = subset_indices[:train_size]
+        val_indices = subset_indices[train_size:]
+        
+        # Save indices for all processes
+        indices_dict = {
+            'train_indices': train_indices,
+            'val_indices': val_indices
+        }
+        torch.save(indices_dict, 'data_splits.pt')
+        
+        print(f"Selected {len(subset_indices)} samples")
+        print(f"Train: {len(train_indices)}, Val: {len(val_indices)}")
+        
+        # Build tokenizers ONLY on training data
+        train_ds_raw = ds_all.select(train_indices)
+        tokenizer_src = get_or_build_tokenizer(config, train_ds_raw, config['lang_src'])
+        tokenizer_tgt = get_or_build_tokenizer(config, train_ds_raw, config['lang_tgt'])
+        
+        # Calculate max lengths on training data only
+        max_len_src = 0
+        max_len_tgt = 0
+        for item in train_ds_raw:
+            src_ids = tokenizer_src.encode(item[config['lang_src']]).ids
+            tgt_ids = tokenizer_tgt.encode(item[config['lang_tgt']]).ids
+            max_len_src = max(max_len_src, len(src_ids))
+            max_len_tgt = max(max_len_tgt, len(tgt_ids))
+        
+        print(f'Max length of source sentence: {max_len_src}')
+        print(f'Max length of target sentences: {max_len_tgt}')
     
-    # Split data
-    train_ds_size = int(len(ds_raw) * 0.9)
-    val_ds_size = len(ds_raw) - train_ds_size
-    train_ds_raw, val_ds_raw = random_split(ds_raw, [train_ds_size, val_ds_size])
+    # Wait for main process to finish
+    if torch.distributed.is_initialized():
+        torch.distributed.barrier()
     
-    # Build tokenizers only on training data
+    # ALL PROCESSES: Load the same data splits
+    if not is_main_process:
+        print(f"Process {rank} loading prepared data splits...")
+    
+    indices_dict = torch.load('data_splits.pt')
+    train_indices = indices_dict['train_indices']
+    val_indices = indices_dict['val_indices']
+    
+    # Create datasets using the same splits
+    train_ds_raw = ds_all.select(train_indices)
+    val_ds_raw = ds_all.select(val_indices)
+    
+    # Load tokenizers (should exist from main process)
     tokenizer_src = get_or_build_tokenizer(config, train_ds_raw, config['lang_src'])
     tokenizer_tgt = get_or_build_tokenizer(config, train_ds_raw, config['lang_tgt'])
     
-    # # now 90% for training and remaning for validation
-    # train_ds_size = int(len(ds_all) * 0.9)
-    # val_ds_size = len(ds_all) - train_ds_size
-
-    # train_ds_raw, val_ds_raw = random_split(ds_all, [train_ds_size, val_ds_size])
-
-    train_ds = BilingualDataset(train_ds_raw, tokenizer_src, tokenizer_tgt, config['lang_src'], config['lang_tgt'], seq_len=config['seq_len'])
-    val_ds = BilingualDataset(val_ds_raw, tokenizer_src, tokenizer_tgt, config['lang_src'], config['lang_tgt'], seq_len=config['seq_len'])
-
-    # find the minimum length of each sentence in the source and target sentence
-    max_len_src = 0
-    max_len_tgt = 0
+    # Create BilingualDataset objects
+    train_ds = BilingualDataset(train_ds_raw, tokenizer_src, tokenizer_tgt, 
+                               config['lang_src'], config['lang_tgt'], 
+                               seq_len=config['seq_len'])
+    val_ds = BilingualDataset(val_ds_raw, tokenizer_src, tokenizer_tgt, 
+                             config['lang_src'], config['lang_tgt'], 
+                             seq_len=config['seq_len'])
     
-    for item in ds_all:
-        src_ids = tokenizer_src.encode(item[config['lang_src']]).ids
-        tgt_ids = tokenizer_tgt.encode(item[config['lang_tgt']]).ids
-        max_len_src = max(max_len_src, len(src_ids))
-        max_len_tgt = max(max_len_tgt, len(tgt_ids))
-
-    print(f'Max length of source sentence: {max_len_src}')
-    print(f'Max length of target sentences {max_len_tgt}')
-    
-    # we find the max length to decide seq_len that is large enough to cover most sentences, but not so large that memory is wasted on padding
-
-    # Create DataLoaders with appropriate batch sizes
-    train_dataloader = DataLoader(
-        train_ds, 
-        batch_size=config['batch_size'], 
-        shuffle=True,
-        num_workers=4,
-        pin_memory=True
-    )
-    
-    val_dataloader = DataLoader(
-        val_ds, 
-        batch_size=config['val_batch_size'],  # Use validation batch size
-        shuffle=False,  # No need to shuffle validation
-        num_workers=4,
-        pin_memory=True
-    )
+    # Create DataLoaders with DistributedSampler for DDP
+    if torch.distributed.is_initialized():
+        train_sampler = DistributedSampler(train_ds, shuffle=True)
+        val_sampler = DistributedSampler(val_ds, shuffle=False)
+        
+        train_dataloader = DataLoader(
+            train_ds, 
+            batch_size=config['batch_size'], 
+            sampler=train_sampler,
+            num_workers=2,
+            pin_memory=True
+        )
+        
+        val_dataloader = DataLoader(
+            val_ds, 
+            batch_size=config['val_batch_size'],
+            sampler=val_sampler,
+            num_workers=2,
+            pin_memory=True
+        )
+    else:
+        train_dataloader = DataLoader(
+            train_ds, 
+            batch_size=config['batch_size'], 
+            shuffle=True,
+            num_workers=4,
+            pin_memory=True
+        )
+        
+        val_dataloader = DataLoader(
+            val_ds, 
+            batch_size=config['val_batch_size'],
+            shuffle=False,
+            num_workers=4,
+            pin_memory=True
+        )
     
     return train_dataloader, val_dataloader, tokenizer_src, tokenizer_tgt
 

@@ -52,68 +52,101 @@ def visualize_alpha_values(model, save_dir='visualizations'):
     plt.close()
 
 def visualize_attention_patterns(model, tokenizer_src, tokenizer_tgt, sample_text, save_dir='visualizations'):
-    """this visualizes the attention patterns for a sample input"""
+    """Visualize attention patterns using stored weights"""
     Path(save_dir).mkdir(parents=True, exist_ok=True)
     model.eval()
     device = next(model.parameters()).device
 
-    # need to tokenize input
-    tokens = tokenizer_src.encode(sample_text).ids
+    # Use short sample text
+    sample_text = "Hello world"
+    tokens = tokenizer_src.encode(sample_text).ids[:8]  # Limit to 8 tokens
+    
+    # Ensure minimum length
+    pad_token = tokenizer_src.token_to_id('[PAD]') or 0
+    while len(tokens) < 4:
+        tokens.append(pad_token)
+    
     input_ids = torch.tensor([tokens]).to(device)
+    seq_len = input_ids.size(1)
 
-    # attention mask
-    mask = torch.ones((1, 1, 1, len(tokens))).to(device)
+    # Create masks
+    encoder_mask = torch.ones(1, 1, 1, seq_len).to(device)
+    decoder_mask = torch.triu(torch.ones(seq_len, seq_len), diagonal=1).to(device)
+    decoder_mask = (decoder_mask == 0).float().unsqueeze(0).unsqueeze(0)
 
-    # get attention patterns
-    attention_patterns = []
-    def hook_fn(module, input, output):
-        attention_patterns.append(output.detach().cpu())
-
-    hooks = []
-    for name, module in model.named_modules():
-        if "self_attention_block" in name:
-            hooks.append(module.register_forward_hook(hook_fn))
-    
-    # forward pass
+    # Forward pass to populate attention weights
     with torch.no_grad():
-        model(input_ids, input_ids, mask, mask)
+        try:
+            model(input_ids, input_ids, encoder_mask, decoder_mask)
+        except Exception as e:
+            print(f"Forward pass failed: {e}")
+            return
 
-    # remove hooks
-    for hook in hooks:
-        hook.remove()
-
-    # plot attention patterns
-    for layer_idx, attn in enumerate(attention_patterns):
-        attn = attn[0] # this removes batch dimension
-        n_heads = attn.size(0)  # Fixed: was .size[0]
-
-        fig, axes = plt.subplots(2, n_heads//2, figsize=(15,8))  # Fixed: was .subplot
-        axes = axes.flat
+    # Extract attention weights from modules
+    layer_idx = 0
+    for name, module in model.named_modules():
+        if hasattr(module, 'last_attention_weights') and module.last_attention_weights is not None:
+            attn_weights = module.last_attention_weights.cpu()
+            
+            if attn_weights.dim() == 4:  # (B, h, L, L)
+                attn_weights = attn_weights[0]  # Remove batch dimension: (h, L, L)
+            
+            # Plot first 4 heads
+            n_heads = min(attn_weights.size(0), 4)
+            fig, axes = plt.subplots(2, 2, figsize=(12, 10))
+            axes = axes.flatten()
+            
+            for head_idx in range(n_heads):
+                attn_matrix = attn_weights[head_idx].numpy()
+                
+                sns.heatmap(attn_matrix, 
+                           ax=axes[head_idx], 
+                           cmap='Blues',
+                           cbar=True,
+                           square=True,
+                           xticklabels=range(seq_len),
+                           yticklabels=range(seq_len))
+                axes[head_idx].set_title(f'Head {head_idx}')
+                axes[head_idx].set_xlabel('Key Position')
+                axes[head_idx].set_ylabel('Query Position')
+            
+            # Hide unused subplots
+            for i in range(n_heads, 4):
+                axes[i].set_visible(False)
+            
+            plt.suptitle(f'Layer {layer_idx} Attention Patterns')
+            plt.tight_layout()
+            plt.savefig(f'{save_dir}/attention_layer_{layer_idx}.png', dpi=150, bbox_inches='tight')
+            plt.close()
+            
+            layer_idx += 1
+            if layer_idx >= 2:  # Only first 2 layers
+                break
     
-        for head_idx in range(n_heads):
-            sns.heatmap(attn[head_idx], ax=axes[head_idx], cmap='viridis')
-            axes[head_idx].set_title(f'Head {head_idx}')  # Fixed: was .set_titile
-
-        plt.suptitle(f'Layer {layer_idx} Attention Patterns')
-        plt.tight_layout()
-        plt.savefig(f'{save_dir}/attention_layer_{layer_idx}.png')
-        plt.close()
-
+    print(f"Attention visualization saved to {save_dir}/")
 
 def log_visualizations(model, tokenizer_src, tokenizer_tgt, global_step, save_dir='visualizations'):
     """this logs the visualizations during training"""
-    # Skip visualization for now to avoid shape errors
-    print("Skipping visualizations - debugging shape mismatch...")
-    return
-    
-    # TODO: Fix this after the shape error is resolved
-    # if hasattr(model, 'module'):
-    #     model_unwrapped = model.module
-    # else:
-    #     model_unwrapped = model
-    
-    # save_dir = f'{save_dir}/step_{global_step}'
-    
-    # visualize_alpha_values(model_unwrapped, save_dir)
-    # sample_text = 'This is a sample input text to visualize attention.'
-    # visualize_attention_patterns(model_unwrapped, tokenizer_src, tokenizer_tgt, sample_text, save_dir)
+    try:
+        if hasattr(model, 'module'):
+            model_unwrapped = model.module
+        else:
+            model_unwrapped = model
+        
+        step_dir = f'{save_dir}/step_{global_step}'
+        
+        # Alpha visualization
+        print("Generating alpha visualizations...")
+        visualize_alpha_values(model_unwrapped, step_dir)
+        
+        # Attention visualization (now fixed!)
+        print("Generating attention visualizations...")
+        visualize_attention_patterns(model_unwrapped, tokenizer_src, tokenizer_tgt, 
+                                   "Hello world", step_dir)
+        
+        print(f"Visualizations saved to {step_dir}/")
+        
+    except Exception as e:
+        print(f"Error generating visualizations: {e}")
+        import traceback
+        traceback.print_exc()
