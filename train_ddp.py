@@ -4,12 +4,22 @@ import torch.distributed as dist
 import torch.multiprocessing as mp
 from torch.nn.parallel import DistributedDataParallel as DDP
 from torch.utils.data.distributed import DistributedSampler
-from torch.utils.data import DataLoader  # Add this import
+from torch.utils.data import DataLoader
 from train import get_model, get_ds, train_model
 from config import get_config
 
 # Set memory allocation strategy
 os.environ['PYTORCH_CUDA_ALLOC_CONF'] = 'expandable_segments:True'
+
+def collate_fn(batch):
+    """Convert list of samples to dictionary batch"""
+    return {
+        'encoder_input': torch.stack([item['encoder_input'] for item in batch]),
+        'decoder_input': torch.stack([item['decoder_input'] for item in batch]),
+        'encoder_mask': torch.stack([item['encoder_mask'] for item in batch]),
+        'decoder_mask': torch.stack([item['decoder_mask'] for item in batch]),
+        'label': torch.stack([item['label'] for item in batch])
+    }
 
 def setup(rank, world_size):
     """Initialize distributed training environment"""
@@ -40,7 +50,7 @@ def train_ddp(rank, world_size, config):
             
         model = model.to(rank)
         
-        # Wrap model in DDP with memory-efficient settings
+        # Wrap model in DDP
         ddp_model = DDP(
             model, 
             device_ids=[rank],
@@ -53,16 +63,6 @@ def train_ddp(rank, world_size, config):
         
         train_sampler = DistributedSampler(train_dataloader.dataset, num_replicas=world_size, rank=rank)
         
-        def collate_fn(batch):
-            # Convert list of samples to dictionary batch
-            return {
-                'encoder_input': torch.stack([item['encoder_input'] for item in batch]),
-                'decoder_input': torch.stack([item['decoder_input'] for item in batch]),
-                'encoder_mask': torch.stack([item['encoder_mask'] for item in batch]),
-                'decoder_mask': torch.stack([item['decoder_mask'] for item in batch]),
-                'label': torch.stack([item['label'] for item in batch])
-            }
-        
         train_dataloader = DataLoader(
             train_dataloader.dataset,
             batch_size=config['batch_size'],
@@ -72,7 +72,7 @@ def train_ddp(rank, world_size, config):
             prefetch_factor=3,
             persistent_workers=True,
             drop_last=True,
-            collate_fn=collate_fn  # Add custom collate function
+            collate_fn=collate_fn  # Use the moved collate function
         )
         
         # Create validation dataloader with DDP
