@@ -6,6 +6,8 @@ datasets
 tokenizers
 tqdm
 tensorboard
+matplotlib
+seaborn
 # Optional: for Jupyter notebook support
 #ipython
 # Optional: for Apple Silicon (MPS) support, use torch from PyPI >=1.12

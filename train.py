@@ -3,11 +3,13 @@ from sparse_model import build_sparse_transformer
 from adaptive_sparse_model import build_adaptive_sparse_transformer
 from dataset import BilingualDataset, causal_mask
 from config import get_config, get_weights_file_path, latest_weight_file_path
+from visualization import *
 
 import torch
 import torch.nn as nn
 from torch.utils.data import Dataset, DataLoader, random_split
 from torch.optim.lr_scheduler import LambdaLR
+from torch.utils.data.distributed import DistributedSampler
 
 import warnings
 from tqdm import tqdm
@@ -258,33 +260,18 @@ def run_validation(model, validation_ds, tokenizer_src, tokenizer_tgt, max_len, 
             f.write(f"Step {global_step}: BLEU={bleu:.4f}, CER={cer:.4f}, WER={wer:.4f}\n")
 
 
-def train_model(config):
-    # lets define the device first
-    device = "cuda" if torch.cuda.is_available() else "mps" if getattr(torch.backends, "mps", None) and torch.backends.mps.is_available() else "cpu"
-    print("using device", device)
-    if (device == "cuda"):
-        print(f'Device name: {torch.cuda.get_device_name(device.index)}')
-        print(f'Device memory: {torch.cuda.get_device_properties(device.index).total_memory / 1024 ** 3} GB')
-    elif (device == "mps"):
-        print(f'Device name: <mps>')
-    else:
-        print('Note: if you have a GPU, consider using it for training')
-
-
+def train_model(config, model=None, train_dataloader=None, val_dataloader=None, tokenizer_src=None, tokenizer_tgt=None):
+    # Get model and data if not provided (for non-distributed training)
+    if model is None or train_dataloader is None:
+        train_dataloader, val_dataloader, tokenizer_src, tokenizer_tgt = get_ds(config)
+        model = get_model(config, tokenizer_src.get_vocab_size(), tokenizer_tgt.get_vocab_size())
+    
+    device = torch.device(f"cuda:{config['gpu']}" if config['gpu'] is not None else "cuda")
+    model = model.to(device)
+    
     # lets make sure the weights folder exists
     Path(f"{config['data_source']}_{config['model_folder']}").mkdir(parents=True, exist_ok=True)
 
-    train_dataloader, val_dataloader, tokenizer_src, tokenizer_tgt = get_ds(config)
-
-    model = get_model(config, tokenizer_src.get_vocab_size(), tokenizer_tgt.get_vocab_size())
-    
-    # added gpu parallel support
-    if torch.cuda.device_count() > 1 and device == "cuda":
-        print("Using", torch.cuda.device_count(), "GPUs!")
-        model = nn.DataParallel(model)
-
-    model = model.to(device)
-    
     # tensorboard part
     writer = SummaryWriter(config['experiment_name'])
     
@@ -351,7 +338,12 @@ def train_model(config):
         # run validation at the end of every epochs
         run_validation(model, val_dataloader, tokenizer_src, tokenizer_tgt, config['seq_len'], device, lambda msg: batch_iterator.write(msg), global_step, writer)
 
-        # Save the model at the end of every N epochs (e.g., every 5)
+        # Add visualization for sparse models logging every N epochs
+        if config['use_adaptive_sparse'] and config['visualize'] and (epoch + 1) % 2 == 0:
+            print("Generating attention visualizations...")
+            log_visualizations(model, tokenizer_src, tokenizer_tgt, global_step)
+
+        # Save the model at the end of every N epochs
         if (epoch + 1) % 2 == 0 or (epoch + 1) == config['num_epochs']:
             model_filename = get_weights_file_path(config, f"{epoch:02d}")
             torch.save({
@@ -360,10 +352,4 @@ def train_model(config):
                 'optimizer_state_dict': optimizer.state_dict(),
                 'global_step': global_step
             }, model_filename)
-
-
-if __name__ == "__main__":
-    warnings.filterwarnings("ignore")
-    config = get_config()
-    train_model(config)
 

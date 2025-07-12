@@ -13,7 +13,8 @@ def get_config():
         'dropout': 0.1,
         'use_sparse': False,
         'use_adaptive_sparse': False, 
-        'attn_type': "entmax_alpha", # entmax_alpha, entmax15, softmax|softmax is the vanilla option    
+        'attn_type': "entmax_alpha", # entmax_alpha, entmax15, softmax|softmax is the vanilla option
+        'visualize': True,    
         'sparse_block_size': 64,
         'sparse_stride': 64,
         'data_source': 'sharad461/ne-en-parallel-208k',
@@ -23,7 +24,12 @@ def get_config():
         'model_basename': 'tmodel_',
         'preload': 'latest',
         'tokenizer_file': 'tokenizer_{0}.json',
-        'experiment_name': 'runs/tmodel'
+        'experiment_name': 'runs/tmodel',
+        'distributed': True,  # Enable distributed training
+        'world_size': -1,    # Number of GPUs (-1 means use all available)
+        'dist_backend': 'nccl',  # Use NCCL backend for NVIDIA GPUs
+        'dist_url': 'tcp://localhost:23456',  # URL for distributed training
+        'gpu': None,  # Will be set based on local rank
     }
 
 
