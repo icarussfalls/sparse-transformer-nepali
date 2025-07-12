@@ -156,110 +156,40 @@ def get_model(config, vocab_src_len, vocab_tgt_len):
     return model
 
 
-def run_validation(model, validation_ds, tokenizer_src, tokenizer_tgt, max_len, device, print_msg, global_step, writer, num_examples=2):
-    # model at eval mode
+def run_validation(model, val_dataloader, tokenizer_src, tokenizer_tgt, seq_len, device, print_msg, global_step, writer, loss_fn):
     model.eval()
-    count = 0
-
-    source_texts = []
-    expected = []
-    predicted = []
-
-    try:
-        # get a console window width
-        with os.popen('stty size', 'r') as console:
-            _, console_width = console.read().split()
-            console_width = int(console_width)
-
-    except:
-        console_width = 80 # use 80 as default if console width can't be get
+    total_loss = 0
+    total_tokens = 0
     
-    with torch.no_grad(): # dont train here, no gradient calc
-        for batch in validation_ds:
-            count += 1
-            encoder_input = batch['encoder_input'].to(device) # (batch, seq_len)
-            encoder_mask = batch['encoder_mask'].to(device) # (batch, 1, 1, seq_len)
-
-            # check that the batch size is 1
-            assert encoder_input.size(0) == 1, "batch size must be one for validation"
-
-            model_out = greedy_decode(model, encoder_input, encoder_mask, tokenizer_src, tokenizer_tgt, max_len, device)
-
-            source_text = batch['src_text'][0]
-            target_text = batch['tgt_text'][0]
-            model_out_text = tokenizer_tgt.decode(model_out.detach().cpu().numpy())
-
-            source_texts.append(source_text)
-            expected.append(target_text)
-            predicted.append(model_out_text)
-
-            # print the source, target, and model output
-            print_msg('-'*console_width)
-            print_msg(f"{f'source: ' :>12}{source_text}")
-            print_msg(f"{f'target: ' :>12}{target_text}")
-            print_msg(f"{f'predicted: ' :>12}{model_out_text}")
-
-            if count == num_examples:
-                break
-
-    if writer:
-        # evaluate the character error rate
-        # compute the char error rate
-        metric = torchmetrics.CharErrorRate()
-        cer = metric(predicted, expected)
-        writer.add_scalar('validation cer', cer, global_step)
-        writer.flush()
-
-        # compute the word error rate
-        metric = torchmetrics.WordErrorRate()
-        wer = metric(predicted, expected)
-        writer.add_scalar('validation wer', wer, global_step)
-        writer.flush()
-
-        # compute the BLEU metric
-        # Tokenize by splitting on whitespace
-        # metric = torchmetrics.BLEUScore()
-        # if bleu doesn't works below, use this bleu = metric(predicted, [[ref] for ref in expected])
-        
-        # bleu = metric(predicted, expected)
-        if not predicted or all(len(p.strip()) == 0 for p in predicted):
-            bleu = 0.0
-            cer = 1.0
-            wer = 1.0
-            print_msg("Warning: Empty prediction(s), metrics set to worst values.")
-        else:
-            # Normalization
-            def normalize(text):
-                return text.replace("“", "").replace("”", "").replace(",", "").replace(".", "").replace("।", "").strip()
-
-            pred_norm = [normalize(p) for p in predicted]
-            ref_norm = [normalize(r) for r in expected]
-
-            # Tokenize each sentence
-            pred_tok = [p.split() for p in pred_norm]
-            ref_tok = [[r.split()] for r in ref_norm]  # Each reference must be a list of references
-
-            smoothie = SmoothingFunction().method4
-            bleu = corpus_bleu(ref_tok, pred_tok, smoothing_function=smoothie)
-
-            # CER & WER
-            metric = torchmetrics.CharErrorRate()
-            cer = metric(pred_norm, ref_norm)
-            metric = torchmetrics.WordErrorRate()
-            wer = metric(pred_norm, ref_norm)
-
-        # Logging and printing as before
-        writer.add_scalar('validation bleu', bleu, global_step)
-        writer.add_scalar('validation cer', cer, global_step)
-        writer.add_scalar('validation wer', wer, global_step)
-        writer.flush()
-        print_msg(f"{f'BLEU: ' :>12}{bleu:.4f}")
-        print_msg(f"{f'CER: ' :>12}{cer:.4f}")
-        print_msg(f"{f'WER: ' :>12}{wer:.4f}")
-        with open("metrics_log.txt", "a") as f:
-            f.write(f"Step {global_step}: BLEU={bleu:.4f}, CER={cer:.4f}, WER={wer:.4f}\n")
-
-
+    with torch.no_grad():
+        val_bar = tqdm(val_dataloader, desc="Validation")
+        for batch in val_bar:
+            encoder_input = batch['encoder_input'].to(device)
+            decoder_input = batch['decoder_input'].to(device)
+            encoder_mask = batch['encoder_mask'].to(device)
+            decoder_mask = batch['decoder_mask'].to(device)
+            label = batch['label'].to(device)
+            
+            # Forward pass
+            with autocast():
+                proj_output = model(encoder_input, decoder_input, encoder_mask, decoder_mask)
+                loss = loss_fn(proj_output.view(-1, tokenizer_tgt.get_vocab_size()), label.view(-1))
+            
+            total_loss += loss.item()
+            total_tokens += label.ne(tokenizer_tgt.token_to_id('[PAD]')).sum().item()
+            
+            val_bar.set_postfix({'val_loss': f"{total_loss/total_tokens:.4f}"})
+    
+    # Log validation metrics
+    avg_loss = total_loss / total_tokens
+    writer.add_scalar('val/loss', avg_loss, global_step)
+    
+    # Generate a sample translation
+    if print_msg:
+        translate_sample(model, tokenizer_src, tokenizer_tgt, device, print_msg)
+    
+    model.train()
+    return avg_loss
 def train_model(config, model=None, train_dataloader=None, val_dataloader=None, tokenizer_src=None, tokenizer_tgt=None):
     # Get model and data if not provided (for non-distributed training)
     if model is None or train_dataloader is None:
@@ -330,16 +260,17 @@ def train_model(config, model=None, train_dataloader=None, val_dataloader=None, 
     scaler = GradScaler() if device == "cuda" else None
 
     for epoch in range(initial_epoch, config['num_epochs']):
-        # Set epoch for DistributedSampler
-        if hasattr(train_dataloader.sampler, 'set_epoch'):
-            train_dataloader.sampler.set_epoch(epoch)
-            
         model.train()
-        batch_iterator = tqdm(train_dataloader, desc=f'Processing epoch {epoch:02d}')
+        total_loss = 0
+        batch_iterator = tqdm(train_dataloader, desc=f"Processing epoch {epoch:02d}")
         
-        accumulated_loss = 0
-        optimizer.zero_grad()
-
+        # Add epoch statistics
+        epoch_stats = {
+            'loss': 0.0,
+            'steps': 0,
+            'lr': scheduler.get_last_lr()[0]
+        }
+        
         for i, batch in enumerate(batch_iterator):
             # Move to GPU and clear previous gradients
             encoder_input = batch['encoder_input'].to(device, non_blocking=True)
@@ -370,44 +301,70 @@ def train_model(config, model=None, train_dataloader=None, val_dataloader=None, 
                     scheduler.step()
                     optimizer.zero_grad(set_to_none=True)  # More efficient than zero_grad()
                     
-                    # Log metrics and clear memory
+                    # Update statistics
+                    epoch_stats['loss'] += accumulated_loss
+                    epoch_stats['steps'] += 1
+                    current_lr = scheduler.get_last_lr()[0]
+                    
+                    # Update progress bar
                     batch_iterator.set_postfix({
-                        "loss": f"{accumulated_loss:.3f}",
-                        "lr": f"{scheduler.get_last_lr()[0]:.6f}"
+                        'loss': f"{accumulated_loss:.4f}",
+                        'avg_loss': f"{epoch_stats['loss']/epoch_stats['steps']:.4f}",
+                        'lr': f"{current_lr:.6f}"
                     })
-                    writer.add_scalar('train_loss', accumulated_loss, global_step)
+                    
+                    # Log to TensorBoard
+                    writer.add_scalar('train/loss', accumulated_loss, global_step)
+                    writer.add_scalar('train/learning_rate', current_lr, global_step)
+                    
                     accumulated_loss = 0
                     global_step += 1
-                    
-                    # Clear cache periodically
-                    if i % 50 == 0:
-                        torch.cuda.empty_cache()
-
-            # Clear tensors from memory
-            del encoder_input, decoder_input, encoder_mask, decoder_mask, label
-            torch.cuda.empty_cache()
-
-        # run validation at the end of every epochs
-        run_validation(model, val_dataloader, tokenizer_src, tokenizer_tgt, config['seq_len'], device, lambda msg: batch_iterator.write(msg), global_step, writer)
-
-        # Add visualization for sparse models logging every N epochs
-        if config['use_adaptive_sparse'] and config['visualize'] and (epoch + 1) % 2 == 0:
-            print("Generating attention visualizations...")
-            log_visualizations(model, tokenizer_src, tokenizer_tgt, global_step)
-
-        # Save the model at the end of every N epochs
-        if (epoch + 1) % 2 == 0 or (epoch + 1) == config['num_epochs']:
+        
+        # End of epoch logging
+        avg_loss = epoch_stats['loss'] / epoch_stats['steps']
+        print(f"\nEpoch {epoch} Summary:")
+        print(f"Average Loss: {avg_loss:.4f}")
+        print(f"Learning Rate: {epoch_stats['lr']:.6f}")
+        
+        # Run validation
+        if epoch % 2 == 0:  # Validate every 2 epochs
+            val_loss = run_validation(
+                model, val_dataloader, tokenizer_src, tokenizer_tgt,
+                config['seq_len'], device, 
+                lambda msg: batch_iterator.write(msg),
+                global_step, writer, loss_fn  # Added loss_fn here
+            )
+            print(f"Validation Loss: {val_loss:.4f}")
+            
+            # Save model checkpoint
             model_filename = get_weights_file_path(config, f"{epoch:02d}")
             torch.save({
                 'epoch': epoch,
                 'model_state_dict': model.state_dict(),
                 'optimizer_state_dict': optimizer.state_dict(),
                 'scheduler_state_dict': scheduler.state_dict(),
-                'global_step': global_step
+                'global_step': global_step,
+                'train_loss': avg_loss,
+                'val_loss': val_loss
             }, model_filename)
+            print(f"Saved checkpoint: {model_filename}")
 
 def print_gpu_memory():
     """Print GPU memory usage"""
     print(f"GPU memory allocated: {torch.cuda.memory_allocated() / 1e9:.2f} GB")
     print(f"GPU memory cached: {torch.cuda.memory_reserved() / 1e9:.2f} GB")
+
+def translate_sample(model, tokenizer_src, tokenizer_tgt, device, print_msg):
+    sample_text = "This is a test sentence."
+    print_msg("\nSample Translation:")
+    print_msg(f"Source: {sample_text}")
+    
+    # Tokenize and translate
+    model.eval()
+    with torch.no_grad():
+        # Implement your translation logic here
+        translated = greedy_decode(model, sample_text, tokenizer_src, tokenizer_tgt, device)
+    
+    print_msg(f"Translation: {translated}\n")
+    model.train()
 
