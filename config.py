@@ -4,20 +4,20 @@ def get_config():
     return {
         'batch_size': 64,
         'val_batch_size': 64,
-        'gradient_accumulation_steps': 1,  # update weights every step
-        'gradient_checkpointing': False,  # Keep disabled for speed
+        'gradient_accumulation_steps': 4,  # update weights every step
+        'gradient_checkpointing': True,  
         'num_epochs' : 20,
         'lr': 10**-4,
         'seq_len': 200,
-        'd_model' : 512,
-        'd_ff' : 2048,
+        'd_model' : 256,
+        'd_ff' : 1024,
         'N': 4, 
         'h': 4,
         'dropout': 0.1,
         'use_sparse': False,
         'use_adaptive_sparse': True, 
-        'attn_type': "entmax_alpha",
-        'visualize': False,  # Set to False for normal training
+        'attn_type': "entmax_alpha", # or "entmax_alpha"
+        'visualize': True,  # Set to False for normal training
         'visualize_frequency': 10,  # Only visualize every 10 epochs
         'sparse_block_size': 64,
         'sparse_stride': 64,
