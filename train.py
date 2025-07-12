@@ -289,14 +289,12 @@ def get_ds(config):
     train_ds_raw = ds_all.select(train_indices)
     val_ds_raw = ds_all.select(val_indices)
     
-    # NON-MAIN PROCESSES: Load existing tokenizers (don't build!)
+    # ALL PROCESSES: Load tokenizers (main process built them, others load existing)
     if not is_main_process:
-        # Just load the existing tokenizer files
+        # Load existing tokenizer files
         tokenizer_src = load_existing_tokenizer(config['lang_src'])
         tokenizer_tgt = load_existing_tokenizer(config['lang_tgt'])
-    else:
-        # Main process already built them above
-        pass
+    # Note: Main process already has tokenizers from above
     
     # Create BilingualDataset objects
     train_ds = BilingualDataset(train_ds_raw, tokenizer_src, tokenizer_tgt, 

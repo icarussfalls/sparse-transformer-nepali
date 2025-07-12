@@ -71,7 +71,7 @@ def train_ddp(rank, world_size, config):
         # Initialize distributed training with suppressed warnings
         setup(rank, world_size)
         
-        # Get data and model
+        # Get data and model - This already handles DDP correctly!
         train_dataloader, val_dataloader, tokenizer_src, tokenizer_tgt = get_ds(config)
         
         # Create model and move to GPU
@@ -96,39 +96,8 @@ def train_ddp(rank, world_size, config):
         # Update config with current GPU
         config['gpu'] = rank
         
-        train_sampler = DistributedSampler(train_dataloader.dataset, num_replicas=world_size, rank=rank)
-        
-        train_dataloader = DataLoader(
-            train_dataloader.dataset,
-            batch_size=config['batch_size'],
-            sampler=train_sampler,
-            num_workers=4,
-            pin_memory=True,
-            prefetch_factor=3,
-            persistent_workers=True,
-            drop_last=True,
-            collate_fn=collate_fn
-        )
-        
-        # Create validation dataloader with DDP
-        val_sampler = DistributedSampler(
-            val_dataloader.dataset,
-            num_replicas=world_size,
-            rank=rank,
-            shuffle=False
-        )
-        
-        val_dataloader = DataLoader(
-            val_dataloader.dataset,
-            batch_size=config['val_batch_size'],
-            sampler=val_sampler,
-            num_workers=4,
-            pin_memory=True,
-            prefetch_factor=3,
-            persistent_workers=True,
-            drop_last=True,
-            collate_fn=collate_fn
-        )
+        # DON'T recreate dataloaders - get_ds() already handles DDP properly!
+        # The train_dataloader and val_dataloader already have DistributedSampler
         
         # Enable cudNN benchmarking for better performance
         torch.backends.cudnn.benchmark = True
@@ -137,8 +106,8 @@ def train_ddp(rank, world_size, config):
         train_model(
             config, 
             model=ddp_model,
-            train_dataloader=train_dataloader,
-            val_dataloader=val_dataloader,
+            train_dataloader=train_dataloader,  # Use as-is from get_ds()
+            val_dataloader=val_dataloader,      # Use as-is from get_ds()
             tokenizer_src=tokenizer_src,
             tokenizer_tgt=tokenizer_tgt
         )
