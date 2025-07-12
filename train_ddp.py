@@ -29,32 +29,22 @@ def train_ddp(rank, world_size, config):
         # Get data and model
         train_dataloader, val_dataloader, tokenizer_src, tokenizer_tgt = get_ds(config)
         
-        # Create DDP-compatible dataloaders
-        train_sampler = DistributedSampler(
-            train_dataloader.dataset,
-            num_replicas=world_size,
-            rank=rank
-        )
-        train_dataloader = torch.utils.data.DataLoader(
-            train_dataloader.dataset,
-            batch_size=config['batch_size'],
-            sampler=train_sampler,
-            num_workers=4,
-            pin_memory=True
-        )
-        
         # Create model and move to GPU
         model = get_model(config, tokenizer_src.get_vocab_size(), tokenizer_tgt.get_vocab_size())
+        
+        # Enable gradient checkpointing if configured
         if config['gradient_checkpointing']:
+            print(f"Rank {rank}: Enabling gradient checkpointing")
             model.gradient_checkpointing_enable()
+            
         model = model.to(rank)
         
         # Wrap model in DDP with memory-efficient settings
         ddp_model = DDP(
             model, 
             device_ids=[rank],
-            find_unused_parameters=False,  # Disable if not needed
-            static_graph=True  # Enable for better memory efficiency
+            find_unused_parameters=False,
+            static_graph=True
         )
         
         # Update config with current GPU

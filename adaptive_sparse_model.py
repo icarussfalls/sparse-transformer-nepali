@@ -221,7 +221,7 @@ class ProjectionLayer(nn.Module):
 
 
 class Transformer(nn.Module):
-    def __init__(self, encoder: Encoder, decoder: Decoder, src_embed: InputEmbeddings, tgt_embed: InputEmbeddings, src_pos: PositionalEncoding, tgt_pos: PositionalEncoding, projection_layer: ProjectionLayer) -> None:
+    def __init__(self, encoder, decoder, src_embed, tgt_embed, src_pos, tgt_pos, projection_layer):
         super().__init__()
         self.encoder = encoder
         self.decoder = decoder
@@ -230,37 +230,52 @@ class Transformer(nn.Module):
         self.src_pos = src_pos
         self.tgt_pos = tgt_pos
         self.projection_layer = projection_layer
+        self.gradient_checkpointing = False
 
-    # def encode(self, src, src_mask):
-    #     # (batch, seq_len, d_model)
-    #     src = self.src_embed(src)
-    #     src = self.src_pos(src)
-    #     return self.encoder(src, src_mask)
-
-    # def decode(self, encoder_output: torch.Tensor, src_mask: torch.Tensor, tgt: torch.Tensor, tgt_mask: torch.Tensor):
-    #     # (batch, seq_len, d_model)
-    #     tgt = self.tgt_embed(tgt)
-    #     tgt = self.tgt_pos(tgt)
-    #     return self.decoder(tgt, encoder_output, src_mask, tgt_mask)
-
-    # def project(self, x):
-    #     # (batch, seq_len, vocab_size)
-    #     return self.projection_layer(x)
-    
     def forward(self, encoder_input, decoder_input, encoder_mask, decoder_mask):
-        # Encode
-        src = self.src_embed(encoder_input)
-        src = self.src_pos(src)
-        encoder_output = self.encoder(src, encoder_mask)
-        # Decode
-        tgt = self.tgt_embed(decoder_input)
-        tgt = self.tgt_pos(tgt)
-        decoder_output = self.decoder(tgt, encoder_output, encoder_mask, decoder_mask)
-        # Project
+        if self.gradient_checkpointing and self.training:
+            return self._forward_with_checkpointing(encoder_input, decoder_input, encoder_mask, decoder_mask)
+        return self._forward(encoder_input, decoder_input, encoder_mask, decoder_mask)
+
+    def _forward(self, encoder_input, decoder_input, encoder_mask, decoder_mask):
+        encoder_input = self.src_pos(self.src_embed(encoder_input))
+        decoder_input = self.tgt_pos(self.tgt_embed(decoder_input))
+        
+        encoder_output = self.encoder(encoder_input, encoder_mask)
+        decoder_output = self.decoder(decoder_input, encoder_output, encoder_mask, decoder_mask)
         proj_output = self.projection_layer(decoder_output)
         return proj_output
+
+    def _forward_with_checkpointing(self, encoder_input, decoder_input, encoder_mask, decoder_mask):
+        # Use torch.utils.checkpoint for memory-efficient forward pass
+        def create_custom_forward(module):
+            def custom_forward(*inputs):
+                return module(*inputs)
+            return custom_forward
+
+        encoder_input = self.src_pos(self.src_embed(encoder_input))
+        decoder_input = self.tgt_pos(self.tgt_embed(decoder_input))
         
-    
+        encoder_output = torch.utils.checkpoint.checkpoint(
+            create_custom_forward(self.encoder),
+            encoder_input, encoder_mask
+        )
+        
+        decoder_output = torch.utils.checkpoint.checkpoint(
+            create_custom_forward(self.decoder),
+            decoder_input, encoder_output, encoder_mask, decoder_mask
+        )
+        
+        proj_output = self.projection_layer(decoder_output)
+        return proj_output
+
+    def gradient_checkpointing_enable(self):
+        """Enable gradient checkpointing for memory efficiency"""
+        self.gradient_checkpointing = True
+        
+    def gradient_checkpointing_disable(self):
+        """Disable gradient checkpointing"""
+        self.gradient_checkpointing = False
 
 # lets build the full transformers now
 def build_adaptive_sparse_transformer(
