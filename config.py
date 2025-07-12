@@ -2,22 +2,22 @@ from pathlib import Path
 
 def get_config():
     return {
-        'batch_size': 32,  # Increased from 16
-        'val_batch_size': 32,  # Increased from 16
-        'gradient_accumulation_steps': 2,  # Reduced from 4
-        'gradient_checkpointing': False,  # Disable for speed (uses more memory but faster)
+        'batch_size': 64,  # Doubled from 32
+        'val_batch_size': 64,  # Match training batch size
+        'gradient_accumulation_steps': 1,  # Reduced from 2 - update weights every step
+        'gradient_checkpointing': False,  # Keep disabled for speed
         'num_epochs' : 20,
         'lr': 10**-4,
-        'seq_len': 256,  # Reduced from 300 for faster processing
+        'seq_len': 200,  # Reduced from 256 - shorter sequences = faster
         'd_model' : 512,
         'd_ff' : 2048,
-        'N': 6,
-        'h': 8,
+        'N': 4,  # Reduced from 6 layers - smaller model = faster
+        'h': 4,
         'dropout': 0.1,
         'use_sparse': False,
         'use_adaptive_sparse': True, 
         'attn_type': "entmax_alpha",
-        'visualize': True,    
+        'visualize': True, 
         'sparse_block_size': 64,
         'sparse_stride': 64,
         'data_source': 'sharad461/ne-en-parallel-208k',
