@@ -175,8 +175,9 @@ def run_validation(model, val_dataloader, tokenizer_src, tokenizer_tgt, seq_len,
     model.eval()
     total_loss = 0
     total_tokens = 0
+    translations = []
+    references = []
     
-    # Use torch.cuda.amp for validation too
     with torch.no_grad(), torch.amp.autocast(device_type='cuda'):
         val_bar = tqdm(val_dataloader, desc="Validation")
         for batch in val_bar:
@@ -206,25 +207,44 @@ def run_validation(model, val_dataloader, tokenizer_src, tokenizer_tgt, seq_len,
             total_loss += loss.item()
             total_tokens += label.ne(tokenizer_tgt.token_to_id('[PAD]')).sum().item()
             
-            val_bar.set_postfix({'val_loss': f"{total_loss/max(total_tokens, 1):.4f}"})
+            # Store translations and references for BLEU score
+            if len(translations) < 5:  # Store first 5 examples for display
+                src_text = tokenizer_src.decode(encoder_input[0].cpu().numpy())
+                tgt_text = tokenizer_tgt.decode(label[0].cpu().numpy())
+                with torch.no_grad():
+                    translated = greedy_decode(
+                        model,
+                        encoder_input[0].unsqueeze(0),
+                        encoder_mask[0].unsqueeze(0),
+                        tokenizer_src,
+                        tokenizer_tgt,
+                        seq_len,
+                        device
+                    )
+                translated_text = tokenizer_tgt.decode(translated.cpu().numpy())
+                translations.append((src_text, translated_text, tgt_text))
+            
+            val_bar.set_postfix({
+                'val_loss': f"{total_loss/max(total_tokens, 1):.4f}"
+            })
     
-    # Calculate and log validation metrics
-    avg_loss = total_loss / max(total_tokens, 1)
-    writer.add_scalar('val/loss', avg_loss, global_step)
+    # Print validation summary
+    print("\n" + "="*50)
+    print("Validation Summary:")
+    print(f"Average Loss: {total_loss/max(total_tokens, 1):.4f}")
+    print("\nSample Translations:")
+    for i, (src, trans, ref) in enumerate(translations, 1):
+        print(f"\nExample {i}:")
+        print(f"Source:     {src}")
+        print(f"Generated:  {trans}")
+        print(f"Reference:  {ref}")
+    print("="*50 + "\n")
     
-    # Sample translation only on main process
-    if torch.distributed.get_rank() == 0 and print_msg:
-        translate_sample(
-            model, 
-            tokenizer_src, 
-            tokenizer_tgt, 
-            device, 
-            print_msg,
-            max_len=seq_len  # Pass sequence length from config
-        )
+    # Log to tensorboard
+    writer.add_scalar('val/loss', total_loss/max(total_tokens, 1), global_step)
     
     model.train()
-    return avg_loss
+    return total_loss/max(total_tokens, 1)
 def train_model(config, model=None, train_dataloader=None, val_dataloader=None, tokenizer_src=None, tokenizer_tgt=None):
     # Get model and data if not provided (for non-distributed training)
     if model is None or train_dataloader is None:
@@ -296,15 +316,10 @@ def train_model(config, model=None, train_dataloader=None, val_dataloader=None, 
 
     for epoch in range(initial_epoch, config['num_epochs']):
         model.train()
-        accumulated_loss = 0  # Initialize here
-        batch_iterator = tqdm(train_dataloader, desc=f"Processing epoch {epoch:02d}")
+        epoch_loss = 0
+        num_batches = 0
         
-        # Initialize epoch statistics
-        epoch_stats = {
-            'loss': 0.0,
-            'steps': 0,
-            'lr': scheduler.get_last_lr()[0]
-        }
+        batch_iterator = tqdm(train_dataloader, desc=f"Processing epoch {epoch:02d}")
         
         for i, batch in enumerate(batch_iterator):
             # Move to GPU and clear previous gradients
@@ -327,9 +342,6 @@ def train_model(config, model=None, train_dataloader=None, val_dataloader=None, 
 
                 # Update weights if we've accumulated enough steps
                 if (i + 1) % config['gradient_accumulation_steps'] == 0:
-                    epoch_stats['steps'] += 1  # Increment before division
-                    epoch_stats['loss'] += accumulated_loss
-
                     # Unscale gradients for any gradient clipping
                     scaler.unscale_(optimizer)
                     torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm=1.0)
@@ -339,31 +351,27 @@ def train_model(config, model=None, train_dataloader=None, val_dataloader=None, 
                     scheduler.step()
                     optimizer.zero_grad(set_to_none=True)  # More efficient than zero_grad()
                     
-                    # Update statistics
-                    epoch_stats['loss'] += accumulated_loss
-                    epoch_stats['steps'] += 1
+                    # Update metrics
+                    epoch_loss += accumulated_loss
+                    num_batches += 1
                     current_lr = scheduler.get_last_lr()[0]
                     
-                    # Update progress bar
+                    # Update progress bar with actual loss values
                     batch_iterator.set_postfix({
                         'loss': f"{accumulated_loss:.4f}",
-                        'avg_loss': f"{epoch_stats['loss']/epoch_stats['steps']:.4f}",
+                        'avg_loss': f"{epoch_loss/num_batches:.4f}",
                         'lr': f"{current_lr:.6f}"
                     })
-                    
-                    # Log to TensorBoard
-                    writer.add_scalar('train/loss', accumulated_loss, global_step)
-                    writer.add_scalar('train/learning_rate', current_lr, global_step)
                     
                     accumulated_loss = 0
                     global_step += 1
         
-        # End of epoch logging
-        avg_loss = epoch_stats['loss'] / max(epoch_stats['steps'], 1)  # Prevent division by zero
+        # End of epoch logging with actual values
+        avg_loss = epoch_loss / max(num_batches, 1)  # Prevent division by zero
         print(f"\nEpoch {epoch} Summary:")
-        print(f"Average Loss: {avg_loss:.4f}")
-        print(f"Learning Rate: {epoch_stats['lr']:.6f}")
-        print_gpu_memory()  # Add memory monitoring
+        print(f"Average Training Loss: {avg_loss:.4f}")
+        print(f"Learning Rate: {scheduler.get_last_lr()[0]:.6f}")
+        print_gpu_memory()
         
         # Run validation
         if epoch % 2 == 0:  # Validate every 2 epochs
