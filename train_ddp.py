@@ -7,9 +7,20 @@ from torch.utils.data.distributed import DistributedSampler
 from torch.utils.data import DataLoader
 from train import get_model, get_ds, train_model
 from config import get_config
+import warnings
+import logging
 
-# Set memory allocation strategy
+# Silence warnings
+warnings.filterwarnings("ignore")
+logging.getLogger("torch").setLevel(logging.ERROR)
+logging.getLogger("torch.distributed").setLevel(logging.ERROR)
+os.environ["PYTHONWARNINGS"] = "ignore"
+
+# Set CUDA environment variables
+os.environ['CUDA_LAUNCH_BLOCKING'] = '1'
 os.environ['PYTORCH_CUDA_ALLOC_CONF'] = 'expandable_segments:True'
+os.environ["XLA_FLAGS"] = "--xla_gpu_cuda_data_dir=/usr/local/cuda"
+os.environ["TF_CPP_MIN_LOG_LEVEL"] = "3"  # Silence TensorFlow CUDA warnings
 
 def collate_fn(batch):
     """Convert list of samples to dictionary batch"""
@@ -113,6 +124,12 @@ def train_ddp(rank, world_size, config):
 
 def main():
     try:
+        # Disable CUDA warnings
+        torch.backends.cudnn.enabled = True
+        torch.backends.cudnn.benchmark = True
+        torch.backends.cuda.matmul.allow_tf32 = True
+        torch.backends.cudnn.allow_tf32 = True
+        
         # Get config
         config = get_config()
         
