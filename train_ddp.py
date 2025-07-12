@@ -52,14 +52,27 @@ def train_ddp(rank, world_size, config):
         config['gpu'] = rank
         
         train_sampler = DistributedSampler(train_dataloader.dataset, num_replicas=world_size, rank=rank)
-        train_dataloader = torch.utils.data.DataLoader(
+        
+        def collate_fn(batch):
+            # Convert list of samples to dictionary batch
+            return {
+                'encoder_input': torch.stack([item['encoder_input'] for item in batch]),
+                'decoder_input': torch.stack([item['decoder_input'] for item in batch]),
+                'encoder_mask': torch.stack([item['encoder_mask'] for item in batch]),
+                'decoder_mask': torch.stack([item['decoder_mask'] for item in batch]),
+                'label': torch.stack([item['label'] for item in batch])
+            }
+        
+        train_dataloader = DataLoader(
             train_dataloader.dataset,
             batch_size=config['batch_size'],
             sampler=train_sampler,
-            num_workers=4,  # Increased from default
+            num_workers=4,
             pin_memory=True,
-            prefetch_factor=2,  # Add prefetching
-            persistent_workers=True  # Keep workers alive
+            prefetch_factor=3,
+            persistent_workers=True,
+            drop_last=True,
+            collate_fn=collate_fn  # Add custom collate function
         )
         
         # Create validation dataloader with DDP
@@ -75,7 +88,11 @@ def train_ddp(rank, world_size, config):
             batch_size=config['val_batch_size'],
             sampler=val_sampler,
             num_workers=4,
-            pin_memory=True
+            pin_memory=True,
+            prefetch_factor=3,
+            persistent_workers=True,
+            drop_last=True,
+            collate_fn=collate_fn  # Add custom collate function
         )
         
         # Enable cudNN benchmarking for better performance
