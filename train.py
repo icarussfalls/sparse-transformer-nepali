@@ -197,7 +197,7 @@ class TokenizedResult:
         self.ids = ids
 
 def get_ds(config):
-    # Only main process should handle data preparation
+    # Distributed training setup
     if torch.distributed.is_initialized():
         rank = torch.distributed.get_rank()
         world_size = torch.distributed.get_world_size()
@@ -216,7 +216,14 @@ def get_ds(config):
         
         # Select subset and create consistent splits
         total_len = len(ds_all)
-        subset_size = int(0.01 * total_len)
+        
+        # Adjust subset size based on number of GPUs
+        base_subset_percentage = 0.01  # 1% total
+        subset_size = int(base_subset_percentage * total_len)
+        
+        # If using multiple GPUs, don't multiply - keep the same total
+        print(f"Using {subset_size} samples total ({base_subset_percentage*100}% of dataset)")
+        print(f"With {world_size} GPUs, each will process ~{subset_size // world_size} samples")
         
         # Fixed seed for reproducible selection
         torch.manual_seed(42)
@@ -240,7 +247,7 @@ def get_ds(config):
         }
         torch.save(indices_dict, 'data_splits.pt')
         
-        print(f"Selected {len(subset_indices)} samples")
+        print(f"Selected {len(subset_indices)} samples total")
         print(f"Train: {len(train_indices)}, Val: {len(val_indices)}")
         
         # Build tokenizers ONLY on training data (MAIN PROCESS ONLY!)
