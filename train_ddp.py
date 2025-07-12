@@ -68,49 +68,18 @@ def cleanup():
 
 def train_ddp(rank, world_size, config):
     try:
-        # Initialize distributed training with suppressed warnings
+        # Initialize distributed training
         setup(rank, world_size)
         
-        # Get data and model - This already handles DDP correctly!
-        train_dataloader, val_dataloader, tokenizer_src, tokenizer_tgt = get_ds(config)
-        
-        # Create model and move to GPU
-        model = get_model(config, tokenizer_src.get_vocab_size(), tokenizer_tgt.get_vocab_size())
-        
-        # Enable gradient checkpointing if configured
-        if config['gradient_checkpointing']:
-            if rank == 0:  # Only print from rank 0
-                print(f"Enabling gradient checkpointing")
-            model.gradient_checkpointing_enable()
-            
-        model = model.to(rank)
-        
-        # Wrap model in DDP
-        ddp_model = DDP(
-            model, 
-            device_ids=[rank],
-            find_unused_parameters=False,
-            static_graph=True
-        )
-        
-        # Update config with current GPU
+        # Update config for this GPU
         config['gpu'] = rank
+        config['rank'] = rank
+        config['world_size'] = world_size
         
-        # DON'T recreate dataloaders - get_ds() already handles DDP properly!
-        # The train_dataloader and val_dataloader already have DistributedSampler
-        
-        # Enable cudNN benchmarking for better performance
-        torch.backends.cudnn.benchmark = True
-        
-        # Train the model
-        train_model(
-            config, 
-            model=ddp_model,
-            train_dataloader=train_dataloader,  # Use as-is from get_ds()
-            val_dataloader=val_dataloader,      # Use as-is from get_ds()
-            tokenizer_src=tokenizer_src,
-            tokenizer_tgt=tokenizer_tgt
-        )
+        # Call the main training function from train.py
+        # This will handle everything: data loading, model creation, training loop
+        from train import train_model_main
+        train_model_main(config)
     
     finally:
         cleanup()
