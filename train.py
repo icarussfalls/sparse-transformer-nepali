@@ -192,21 +192,24 @@ class TokenizedResult:
         self.ids = ids
 
 def get_ds(config):
-    # the data only has train split so
+    # Load dataset
     ds_all = load_dataset(f"{config['data_source']}", "default", split='train')
-
-    # Shuffle and select a random 10% subset
+    
+    # Shuffle and select subset
     total_len = len(ds_all)
     subset_size = int(0.1 * total_len)
     indices = torch.randperm(total_len).tolist()[:subset_size]
     ds_raw = ds_all.select(indices)
     print(f"Using {subset_size} random samples out of {total_len}")
-
-    ds_all = ds_raw # setting to only 10% of the data to train faster
-
-    # build the tokenizers
-    tokenizer_src = get_or_build_tokenizer(config, ds_all, config['lang_src'])
-    tokenizer_tgt = get_or_build_tokenizer(config, ds_all, config['lang_tgt'])
+    
+    # FIRST: Split into train/val BEFORE building tokenizers
+    train_ds_size = int(len(ds_raw) * 0.9)
+    val_ds_size = len(ds_raw) - train_ds_size
+    train_ds_raw, val_ds_raw = random_split(ds_raw, [train_ds_size, val_ds_size])
+    
+    # SECOND: Build tokenizers ONLY on training data
+    tokenizer_src = get_or_build_tokenizer(config, train_ds_raw, config['lang_src'])  # Only train data
+    tokenizer_tgt = get_or_build_tokenizer(config, train_ds_raw, config['lang_tgt'])  # Only train data
 
     # now 90% for training and remaning for validation
     train_ds_size = int(len(ds_all) * 0.9)

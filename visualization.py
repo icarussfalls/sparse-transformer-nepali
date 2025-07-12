@@ -7,35 +7,48 @@ import numpy as np
 
 # function to visualize the alpha values learned
 def visualize_alpha_values(model, save_dir='visualizations'):
-    """This will visualize the learned alpha values for each head in the adaptively sparse transformers"""
-
-    # collect alpha values from all attention blocks
-    alphas = []
-    head_positions = []
-    layer_number = []
-
-    for name, module in model.named_modules():
-        if hasattr(module, 'alpha'):
-            # lets get layer num from the name
-            layer_num = int(name.split('.')[1]) if 'encoder' in  name else int(name.split('.')[1]) + model.encoder_layers
-            alpha_values = module.alpha.detach().cpu().numpy()
-
-            for head_idx, alpha in enumerate(alpha_values):
-                alphas.append(alpha)
-                head_positions.append(head_idx)
-                layer_number.append(layer_num)
-
-    # creating the heatmap
-    alpha_matrix = np.zeros((max(layer_number) + 1, max(head_positions) + 1))
-    for l, h, a in zip(layer_number, head_positions, alphas):
-        alpha_matrix[l, h] = a
+    """visualize alpha values for adaptive sparse attention"""
+    Path(save_dir).mkdir(parents=True, exist_ok=True)
     
-    plt.figure(figsize=(10,8))
-    sns.heatmap(alpha_matrix, annot=True, fmt='.2f', cmap='viridis')
-    plt.title('Learned alpha values across layers and heads')
-    plt.xlabel('Head Index')
-    plt.ylabel('Layer Index')
-    plt.savefig(f"{save_dir}/alpha_values.png")
+    alpha_values = []
+    layer_names = []
+    
+    # Fix: Handle module names properly
+    for name, module in model.named_modules():
+        if hasattr(module, 'alpha') and module.alpha is not None:
+            alpha_values.append(module.alpha.detach().cpu().numpy())
+            # Fix: Extract layer number properly
+            if 'encoder' in name and 'layers' in name:
+                try:
+                    # Extract layer number from name like 'encoder.layers.0.self_attention_block'
+                    layer_num = name.split('.layers.')[1].split('.')[0]
+                    layer_names.append(f'Encoder Layer {layer_num}')
+                except (IndexError, ValueError):
+                    layer_names.append(name)  # Fallback to full name
+            elif 'decoder' in name and 'layers' in name:
+                try:
+                    layer_num = name.split('.layers.')[1].split('.')[0]
+                    layer_names.append(f'Decoder Layer {layer_num}')
+                except (IndexError, ValueError):
+                    layer_names.append(name)
+            else:
+                layer_names.append(name)
+    
+    if not alpha_values:
+        print("No alpha values found in model")
+        return
+    
+    # Plot alpha values
+    plt.figure(figsize=(12, 8))
+    for i, (alpha, name) in enumerate(zip(alpha_values, layer_names)):
+        plt.subplot(2, (len(alpha_values) + 1) // 2, i + 1)
+        plt.hist(alpha.flatten(), bins=50, alpha=0.7)
+        plt.title(f'{name}\nAlpha Distribution')
+        plt.xlabel('Alpha Value')
+        plt.ylabel('Frequency')
+    
+    plt.tight_layout()
+    plt.savefig(f'{save_dir}/alpha_distributions.png')
     plt.close()
 
 def visualize_attention_patterns(model, tokenizer_src, tokenizer_tgt, sample_text, save_dir='visualizations'):
