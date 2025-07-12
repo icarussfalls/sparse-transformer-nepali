@@ -214,7 +214,14 @@ def run_validation(model, val_dataloader, tokenizer_src, tokenizer_tgt, seq_len,
     
     # Sample translation only on main process
     if torch.distributed.get_rank() == 0 and print_msg:
-        translate_sample(model, tokenizer_src, tokenizer_tgt, device, print_msg)
+        translate_sample(
+            model, 
+            tokenizer_src, 
+            tokenizer_tgt, 
+            device, 
+            print_msg,
+            max_len=seq_len  # Pass sequence length from config
+        )
     
     model.train()
     return avg_loss
@@ -388,27 +395,38 @@ def print_gpu_memory():
     print(f"GPU memory allocated: {allocated:.2f} GB")
     print(f"GPU memory reserved: {reserved:.2f} GB")
 
-def translate_sample(model, tokenizer_src, tokenizer_tgt, device, print_msg):
+def translate_sample(model, tokenizer_src, tokenizer_tgt, device, print_msg, max_len=300):  # Add max_len parameter
     """Generate a sample translation during validation"""
     sample_text = "This is a test sentence."
     print_msg("\nSample Translation:")
     print_msg(f"Source: {sample_text}")
     
-    # Use config's sequence length as max_len
-    max_len = model.module.decoder.max_seq_len if hasattr(model, 'module') else model.decoder.max_seq_len
+    # Tokenize the source text
+    source_tokens = tokenizer_src.encode(sample_text)
+    source = torch.tensor(source_tokens.ids).unsqueeze(0)  # Add batch dimension
+    source_mask = (source != tokenizer_src.token_to_id("[PAD]")).unsqueeze(0)  # Create attention mask
+    
+    # Move tensors to device
+    source = source.to(device)
+    source_mask = source_mask.to(device)
     
     # Tokenize and translate
     model.eval()
     with torch.no_grad():
         translated = greedy_decode(
             model, 
-            sample_text, 
+            source,  # Pass tokenized source
+            source_mask,  # Pass source mask
             tokenizer_src, 
             tokenizer_tgt, 
-            max_len=max_len,  # Add max_len argument
-            device=device     # Add device argument
+            max_len=max_len,
+            device=device
         )
+        
+        # Convert token IDs to text
+        translated_tokens = translated.cpu().numpy()
+        translated_text = tokenizer_tgt.decode(translated_tokens)
     
-    print_msg(f"Translation: {translated}\n")
+    print_msg(f"Translation: {translated_text}\n")
     model.train()
 
