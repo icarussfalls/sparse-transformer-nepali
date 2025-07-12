@@ -101,7 +101,7 @@ def get_ds(config):
 
     # Shuffle and select a random 10% subset
     total_len = len(ds_all)
-    subset_size = int(0.1 * total_len)
+    subset_size = int(0.01 * total_len)
     indices = torch.randperm(total_len).tolist()[:subset_size]
     ds_raw = ds_all.select(indices)
     print(f"Using {subset_size} random samples out of {total_len}")
