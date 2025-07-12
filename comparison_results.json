@@ -1,0 +1,14 @@
+{
+  "vanilla": {
+    "status": "failed",
+    "error": "'gpu'"
+  },
+  "sparse": {
+    "status": "failed",
+    "error": "'gpu'"
+  },
+  "adaptive_sparse": {
+    "status": "failed",
+    "error": "'gpu'"
+  }
+}

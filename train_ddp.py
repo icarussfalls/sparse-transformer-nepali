@@ -76,6 +76,9 @@ def train_ddp(rank, world_size, config):
         config['rank'] = rank
         config['world_size'] = world_size
         
+        # Add DDP suffix to model folder to avoid conflicts
+        config['model_folder'] = f"{config['model_folder']}_ddp"
+        
         # Just call train_model with config - it handles everything internally
         from train import train_model
         train_model(config)
