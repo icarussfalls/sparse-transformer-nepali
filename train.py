@@ -330,40 +330,51 @@ def train_model(config, model=None, train_dataloader=None, val_dataloader=None, 
     scaler = GradScaler() if device == "cuda" else None
 
     for epoch in range(initial_epoch, config['num_epochs']):
-        torch.cuda.empty_cache()
+        # Set epoch for DistributedSampler
+        if hasattr(train_dataloader.sampler, 'set_epoch'):
+            train_dataloader.sampler.set_epoch(epoch)
+            
         model.train()
         batch_iterator = tqdm(train_dataloader, desc=f'Processing epoch {epoch:02d}')
+        
+        accumulated_loss = 0
+        optimizer.zero_grad()
 
-        for batch in batch_iterator:
+        for i, batch in enumerate(batch_iterator):
             encoder_input = batch['encoder_input'].to(device)
             decoder_input = batch['decoder_input'].to(device)
             encoder_mask = batch['encoder_mask'].to(device)
             decoder_mask = batch['decoder_mask'].to(device)
             label = batch['label'].to(device)
 
-            optimizer.zero_grad(set_to_none=True)
-
-            # --- Mixed Precision Training ---
+            # Forward pass
             if scaler is not None:
                 with autocast():
                     proj_output = model(encoder_input, decoder_input, encoder_mask, decoder_mask)
                     loss = loss_fn(proj_output.view(-1, tokenizer_tgt.get_vocab_size()), label.view(-1))
+                    loss = loss / config['gradient_accumulation_steps']  # Normalize loss
+                
+                # Backward pass
                 scaler.scale(loss).backward()
-                scaler.step(optimizer)
-                scaler.update()
-                scheduler.step()  # Update learning rate
-            else:
-                proj_output = model(encoder_input, decoder_input, encoder_mask, decoder_mask)
-                loss = loss_fn(proj_output.view(-1, tokenizer_tgt.get_vocab_size()), label.view(-1))
-                loss.backward()
-                optimizer.step()
-                scheduler.step()  # Update learning rate
-
-            batch_iterator.set_postfix({"loss": f"{loss.item():6.3f}"})
-            writer.add_scalar('train_loss', loss.item(), global_step)
-            writer.flush()
-            global_step += 1
-            # break # break in a step lol to check
+                accumulated_loss += loss.item()
+                
+                # Update weights if we've accumulated enough steps
+                if (i + 1) % config['gradient_accumulation_steps'] == 0:
+                    scaler.step(optimizer)
+                    scaler.update()
+                    scheduler.step()
+                    optimizer.zero_grad()
+                    
+                    # Log metrics
+                    batch_iterator.set_postfix({
+                        "loss": f"{accumulated_loss:.3f}",
+                        "lr": f"{scheduler.get_last_lr()[0]:.6f}"
+                    })
+                    writer.add_scalar('train_loss', accumulated_loss, global_step)
+                    accumulated_loss = 0
+                    global_step += 1
+            
+            # ... rest of the training loop
 
         # run validation at the end of every epochs
         run_validation(model, val_dataloader, tokenizer_src, tokenizer_tgt, config['seq_len'], device, lambda msg: batch_iterator.write(msg), global_step, writer)

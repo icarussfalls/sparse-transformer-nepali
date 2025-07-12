@@ -7,6 +7,9 @@ from torch.utils.data.distributed import DistributedSampler
 from train import get_model, get_ds, train_model
 from config import get_config
 
+# Set memory allocation strategy
+os.environ['PYTORCH_CUDA_ALLOC_CONF'] = 'expandable_segments:True'
+
 def setup(rank, world_size):
     """Initialize distributed training environment"""
     os.environ['MASTER_ADDR'] = '127.0.0.1'
@@ -45,7 +48,7 @@ def train_ddp(rank, world_size, config):
         model = model.to(rank)
         
         # Wrap model in DDP
-        ddp_model = DDP(model, device_ids=[rank])
+        ddp_model = DDP(model, device_ids=[rank], find_unused_parameters=True)
         
         # Update config with current GPU
         config['gpu'] = rank
