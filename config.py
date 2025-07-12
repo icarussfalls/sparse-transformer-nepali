@@ -2,87 +2,53 @@ from pathlib import Path
 
 def get_config():
     return {
-        'batch_size': 8,
-        'num_epochs': 10,
+        'batch_size': 64,
+        'val_batch_size': 64,
+        'gradient_accumulation_steps': 1,  # update weights every step
+        'gradient_checkpointing': False,  
+        'num_epochs' : 20,
         'lr': 10**-4,
-        'seq_len': 350,
-        'd_model': 512,
-        'lang_src': "en",
-        'lang_tgt': "ne",
-        'data_source': 'sharad461/ne-en-parallel-208k',
-        'model_folder': "weights",  # Base folder, will be modified per architecture
-        'model_basename': "tmodel",
-        'preload': False,
-        'tokenizer_file': "tokenizer_{0}.json",
-        'experiment_name': "runs/tmodel",
-        'N': 6,
-        'h': 8,
+        'seq_len': 200,
+        'd_model' : 512,
+        'd_ff' : 1024,
+        'N': 4, 
+        'h': 4,
         'dropout': 0.1,
-        'd_ff': 2048,
         'use_sparse': False,
-        'use_adaptive_sparse': False,
+        'use_adaptive_sparse': True, 
+        'attn_type': "entmax_alpha", # or "entmax_alpha"
+        'visualize': True,  # Set to False for normal training
+        'visualize_frequency': 10,  # Only visualize every 10 epochs
         'sparse_block_size': 64,
-        'sparse_stride': 32,
-        'attn_type': 'adaptive',
-        'val_batch_size': 4,
-        'gradient_accumulation_steps': 4,
-        'warmup_steps': 1000
+        'sparse_stride': 64,
+        'data_source': 'sharad461/ne-en-parallel-208k',
+        'lang_src': 'en',
+        'lang_tgt': 'ne',
+        'model_folder': 'weights',
+        'model_basename': 'tmodel_',
+        'preload': 'latest',
+        'tokenizer_file': 'tokenizer_{0}.json',
+        'experiment_name': 'runs/tmodel',
+        'distributed': True,
+        'world_size': -1,
+        'dist_backend': 'nccl',
+        'dist_url': 'tcp://localhost:23456',
+        'gpu': None,
     }
 
 
-def get_weights_file_path(config, epoch):
-    """Get weights file path for specific architecture"""
-    model_folder = config['model_folder']
-    model_basename = config['model_basename']
-    return f"{model_folder}/{model_basename}_{epoch}.pt"
+def get_weights_file_path(config, epoch: str):
+    model_folder = f"{config['data_source']}_{config['model_folder']}"
+    model_filename = f"{config['model_basename']}{epoch}.pt"
+    return str(Path('.') / model_folder / model_filename)
 
 # find the latest weights file in the weights folder
 def latest_weight_file_path(config):
-    """Get latest weights file for specific architecture"""
-    model_folder = config['model_folder']
-    model_basename = config['model_basename']
-    
-    # Look for files in architecture-specific folder
-    model_files = list(Path(model_folder).glob(f"{model_basename}_*.pt"))
-    if not model_files:
+    model_folder = f"{config['data_source']}_{config['model_folder']}"
+    model_filename = f"{config['model_basename']}*"
+    weights_files = list(Path(model_folder).glob(model_filename))
+    # this searches all the weight files and return all with name
+    if len(weights_files) == 0:
         return None
-    
-    # Get the latest file
-    latest_file = max(model_files, key=lambda x: x.stat().st_mtime)
-    return str(latest_file)
-
-def get_architecture_config(arch_type):
-    """Get architecture-specific config"""
-    base_config = get_config()
-    
-    arch_configs = {
-        'vanilla': {
-            'use_sparse': False,
-            'use_adaptive_sparse': False,
-            'model_folder': 'weights_vanilla',
-            'experiment_name': 'runs/vanilla',
-            'description': 'Standard Transformer'
-        },
-        'sparse': {
-            'use_sparse': True,
-            'use_adaptive_sparse': False,
-            'sparse_block_size': 64,
-            'sparse_stride': 32,
-            'model_folder': 'weights_sparse',
-            'experiment_name': 'runs/sparse',
-            'description': 'Fixed Sparse Attention'
-        },
-        'adaptive_sparse': {
-            'use_adaptive_sparse': True,
-            'use_sparse': False,
-            'attn_type': 'adaptive',
-            'model_folder': 'weights_adaptive_sparse',
-            'experiment_name': 'runs/adaptive_sparse',
-            'description': 'Adaptive Sparse Attention'
-        }
-    }
-    
-    if arch_type not in arch_configs:
-        raise ValueError(f"Unknown architecture: {arch_type}")
-    
-    return {**base_config, **arch_configs[arch_type]}
+    weights_files.sort()
+    return str(weights_files[-1])

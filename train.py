@@ -192,42 +192,46 @@ class TokenizedResult:
         self.ids = ids
 
 def get_ds(config):
-    # Load dataset
+    # the data only has train split so
     ds_all = load_dataset(f"{config['data_source']}", "default", split='train')
 
-    # Use more data for meaningful learning
+    # Shuffle and select a random 10% subset
     total_len = len(ds_all)
-    subset_size = int(0.05 * total_len)  # 5% instead of 1%
+    subset_size = int(0.01 * total_len)
     indices = torch.randperm(total_len).tolist()[:subset_size]
     ds_raw = ds_all.select(indices)
     print(f"Using {subset_size} random samples out of {total_len}")
 
-    # SPLIT DATA FIRST
-    train_ds_size = int(len(ds_raw) * 0.9)
-    val_ds_size = len(ds_raw) - train_ds_size
-    train_ds_raw, val_ds_raw = random_split(ds_raw, [train_ds_size, val_ds_size])
+    ds_all = ds_raw # setting to only 10% of the data to train faster
 
-    # BUILD TOKENIZERS ONLY ON TRAINING DATA
-    tokenizer_src = get_or_build_tokenizer(config, train_ds_raw, config['lang_src'])
-    tokenizer_tgt = get_or_build_tokenizer(config, train_ds_raw, config['lang_tgt'])
+    # build the tokenizers
+    tokenizer_src = get_or_build_tokenizer(config, ds_all, config['lang_src'])
+    tokenizer_tgt = get_or_build_tokenizer(config, ds_all, config['lang_tgt'])
 
-    # Create dataset objects
+    # now 90% for training and remaning for validation
+    train_ds_size = int(len(ds_all) * 0.9)
+    val_ds_size = len(ds_all) - train_ds_size
+
+    train_ds_raw, val_ds_raw = random_split(ds_all, [train_ds_size, val_ds_size])
+
     train_ds = BilingualDataset(train_ds_raw, tokenizer_src, tokenizer_tgt, config['lang_src'], config['lang_tgt'], seq_len=config['seq_len'])
     val_ds = BilingualDataset(val_ds_raw, tokenizer_src, tokenizer_tgt, config['lang_src'], config['lang_tgt'], seq_len=config['seq_len'])
 
-    # Calculate max lengths on TRAINING DATA ONLY
+    # find the minimum length of each sentence in the source and target sentence
     max_len_src = 0
     max_len_tgt = 0
     
-    for item in train_ds_raw:  # Changed from ds_raw to train_ds_raw
+    for item in ds_all:
         src_ids = tokenizer_src.encode(item[config['lang_src']]).ids
         tgt_ids = tokenizer_tgt.encode(item[config['lang_tgt']]).ids
         max_len_src = max(max_len_src, len(src_ids))
         max_len_tgt = max(max_len_tgt, len(tgt_ids))
 
     print(f'Max length of source sentence: {max_len_src}')
-    print(f'Max length of target sentences: {max_len_tgt}')
+    print(f'Max length of target sentences {max_len_tgt}')
     
+    # we find the max length to decide seq_len that is large enough to cover most sentences, but not so large that memory is wasted on padding
+
     # Create DataLoaders with appropriate batch sizes
     train_dataloader = DataLoader(
         train_ds, 
@@ -419,23 +423,14 @@ def train_model(config, model=None, train_dataloader=None, val_dataloader=None, 
     is_distributed = torch.distributed.is_initialized()
     is_main_process = not is_distributed or torch.distributed.get_rank() == 0
     
-    # Create architecture-specific directories
+    # Only main process creates directories and initializes tensorboard
     if is_main_process:
-        # Use the model_folder from config (already architecture-specific)
-        model_dir = Path(config['model_folder'])
-        model_dir.mkdir(parents=True, exist_ok=True)
-        
-        # Create tensorboard directory
-        tb_dir = Path(config['experiment_name'])
-        tb_dir.mkdir(parents=True, exist_ok=True)
-        
+        Path(f"{config['data_source']}_{config['model_folder']}").mkdir(parents=True, exist_ok=True)
         writer = SummaryWriter(config['experiment_name'])
-        print(f"💾 Model checkpoints will be saved to: {model_dir}")
-        print(f"📊 Tensorboard logs will be saved to: {tb_dir}")
     else:
         writer = None
     
-    # Get the model filename for preloading (architecture-specific)
+    # Get the model filename for preloading
     model_filename = None
     if config['preload'] == 'latest':
         model_filename = latest_weight_file_path(config)
@@ -584,7 +579,7 @@ def train_model(config, model=None, train_dataloader=None, val_dataloader=None, 
             )
             print(f"Validation Loss: {val_loss:.4f}")
             
-            # Save model checkpoint with architecture-specific path
+            # Save model checkpoint - only main process
             model_filename = get_weights_file_path(config, f"{epoch:02d}")
             torch.save({
                 'epoch': epoch,
@@ -593,8 +588,7 @@ def train_model(config, model=None, train_dataloader=None, val_dataloader=None, 
                 'scheduler_state_dict': scheduler.state_dict(),
                 'global_step': global_step,
                 'train_loss': avg_loss,
-                'val_loss': val_loss,
-                'architecture': config.get('experiment_name', 'unknown')  # Track architecture
+                'val_loss': val_loss
             }, model_filename)
             print(f"Saved checkpoint: {model_filename}")
 
