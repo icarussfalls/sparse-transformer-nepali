@@ -318,6 +318,7 @@ def train_model(config, model=None, train_dataloader=None, val_dataloader=None, 
         model.train()
         epoch_loss = 0
         num_batches = 0
+        accumulated_loss = 0  # Add this line - initialize accumulated_loss
         
         batch_iterator = tqdm(train_dataloader, desc=f"Processing epoch {epoch:02d}")
         
@@ -349,14 +350,41 @@ def train_model(config, model=None, train_dataloader=None, val_dataloader=None, 
                     scaler.step(optimizer)
                     scaler.update()
                     scheduler.step()
-                    optimizer.zero_grad(set_to_none=True)  # More efficient than zero_grad()
+                    optimizer.zero_grad(set_to_none=True)
                     
                     # Update metrics
                     epoch_loss += accumulated_loss
                     num_batches += 1
                     current_lr = scheduler.get_last_lr()[0]
                     
-                    # Update progress bar with actual loss values
+                    # Update progress bar
+                    batch_iterator.set_postfix({
+                        'loss': f"{accumulated_loss:.4f}",
+                        'avg_loss': f"{epoch_loss/num_batches:.4f}",
+                        'lr': f"{current_lr:.6f}"
+                    })
+                    
+                    accumulated_loss = 0  # Reset after each step
+                    global_step += 1
+            else:
+                # CPU training path
+                proj_output = model(encoder_input, decoder_input, encoder_mask, decoder_mask)
+                loss = loss_fn(proj_output.view(-1, tokenizer_tgt.get_vocab_size()), label.view(-1))
+                loss = loss / config['gradient_accumulation_steps']
+                
+                loss.backward()
+                accumulated_loss += loss.item()
+                
+                if (i + 1) % config['gradient_accumulation_steps'] == 0:
+                    torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm=1.0)
+                    optimizer.step()
+                    scheduler.step()
+                    optimizer.zero_grad(set_to_none=True)
+                    
+                    epoch_loss += accumulated_loss
+                    num_batches += 1
+                    current_lr = scheduler.get_last_lr()[0]
+                    
                     batch_iterator.set_postfix({
                         'loss': f"{accumulated_loss:.4f}",
                         'avg_loss': f"{epoch_loss/num_batches:.4f}",
