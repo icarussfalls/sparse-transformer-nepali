@@ -176,10 +176,12 @@ def run_validation(model, val_dataloader, tokenizer_src, tokenizer_tgt, seq_len,
     total_loss = 0
     total_tokens = 0
     
-    # Only do sample translations once per validation, not for every batch
+    # Store all predictions and references for BLEU calculation
+    all_predictions = []
+    all_references = []
     sample_translations = []
     
-    with torch.no_grad():  # Remove autocast for validation
+    with torch.no_grad():
         val_bar = tqdm(val_dataloader, desc="Validation")
         for batch_idx, batch in enumerate(val_bar):
             # Handle batch format
@@ -196,7 +198,7 @@ def run_validation(model, val_dataloader, tokenizer_src, tokenizer_tgt, seq_len,
                 decoder_mask = batch['decoder_mask'].to(device, non_blocking=True)
                 label = batch['label'].to(device, non_blocking=True)
             
-            # Forward pass (no autocast needed for validation)
+            # Forward pass
             proj_output = model(encoder_input, decoder_input, encoder_mask, decoder_mask)
             loss = loss_fn(
                 proj_output.view(-1, tokenizer_tgt.get_vocab_size()),
@@ -206,47 +208,102 @@ def run_validation(model, val_dataloader, tokenizer_src, tokenizer_tgt, seq_len,
             total_loss += loss.item()
             total_tokens += label.ne(tokenizer_tgt.token_to_id('[PAD]')).sum().item()
             
-            # Only do sample translations for the first batch and first 2 samples
-            if batch_idx == 0 and len(sample_translations) < 2:
-                for i in range(min(2, encoder_input.size(0))):
-                    if len(sample_translations) < 2:
-                        # Quick translation without full greedy decode
-                        src_tokens = encoder_input[i].cpu().numpy()
-                        tgt_tokens = label[i].cpu().numpy()
+            # Get predictions for BLEU calculation (keep on GPU)
+            pred_tokens = torch.argmax(proj_output, dim=-1)
+            
+            # Get special token IDs as tensors on GPU
+            pad_id = tokenizer_tgt.token_to_id('[PAD]')
+            sos_id = tokenizer_tgt.token_to_id('[SOS]')
+            eos_id = tokenizer_tgt.token_to_id('[EOS]')
+            
+            # Process batch on GPU
+            for i in range(encoder_input.size(0)):
+                # Remove special tokens on GPU
+                ref_tokens = label[i]
+                pred_tokens_i = pred_tokens[i]
+                
+                # Create masks on GPU
+                ref_mask = (ref_tokens != pad_id) & (ref_tokens != sos_id) & (ref_tokens != eos_id)
+                pred_mask = (pred_tokens_i != pad_id) & (pred_tokens_i != sos_id) & (pred_tokens_i != eos_id)
+                
+                # Apply masks and get clean tokens
+                ref_clean = ref_tokens[ref_mask]
+                pred_clean = pred_tokens_i[pred_mask]
+                
+                # Only move to CPU for decoding (minimal transfer)
+                if ref_clean.numel() > 0 and pred_clean.numel() > 0:
+                    try:
+                        ref_text = tokenizer_tgt.decode(ref_clean.cpu().numpy())
+                        pred_text = tokenizer_tgt.decode(pred_clean.cpu().numpy())
                         
-                        # Remove padding and special tokens for cleaner output
-                        src_tokens = src_tokens[src_tokens != tokenizer_src.token_to_id('[PAD]')]
-                        tgt_tokens = tgt_tokens[tgt_tokens != tokenizer_tgt.token_to_id('[PAD]')]
+                        # Split into words for BLEU calculation
+                        ref_words = ref_text.split()
+                        pred_words = pred_text.split()
                         
-                        src_text = tokenizer_src.decode(src_tokens)
-                        tgt_text = tokenizer_tgt.decode(tgt_tokens)
-                        
-                        # Simple prediction from model output (no greedy decode)
-                        pred_tokens = torch.argmax(proj_output[i], dim=-1).cpu().numpy()
-                        pred_tokens = pred_tokens[pred_tokens != tokenizer_tgt.token_to_id('[PAD]')]
-                        pred_text = tokenizer_tgt.decode(pred_tokens)
-                        
-                        sample_translations.append((src_text, pred_text, tgt_text))
+                        if len(ref_words) > 0 and len(pred_words) > 0:
+                            all_references.append([ref_words])
+                            all_predictions.append(pred_words)
+                            
+                            # Store sample translations for display (first 3 examples)
+                            if len(sample_translations) < 3:
+                                src_tokens = encoder_input[i]
+                                src_mask = (src_tokens != tokenizer_src.token_to_id('[PAD]'))
+                                src_clean = src_tokens[src_mask]
+                                src_text = tokenizer_src.decode(src_clean.cpu().numpy())
+                                sample_translations.append((src_text, pred_text, ref_text))
+                                
+                    except Exception as e:
+                        # Skip this sample if decoding fails
+                        continue
             
             val_bar.set_postfix({
                 'val_loss': f"{total_loss/max(total_tokens, 1):.4f}"
             })
     
+    # Calculate corpus-level BLEU scores
+    bleu_scores = {}
+    if len(all_predictions) > 0 and len(all_references) > 0:
+        smoothing = SmoothingFunction().method1
+        try:
+            bleu_scores['BLEU-1'] = corpus_bleu(all_references, all_predictions, weights=(1, 0, 0, 0), smoothing_function=smoothing)
+            bleu_scores['BLEU-2'] = corpus_bleu(all_references, all_predictions, weights=(0.5, 0.5, 0, 0), smoothing_function=smoothing)
+            bleu_scores['BLEU-3'] = corpus_bleu(all_references, all_predictions, weights=(0.33, 0.33, 0.33, 0), smoothing_function=smoothing)
+            bleu_scores['BLEU-4'] = corpus_bleu(all_references, all_predictions, weights=(0.25, 0.25, 0.25, 0.25), smoothing_function=smoothing)
+        except Exception as e:
+            print(f"Error calculating BLEU: {e}")
+            bleu_scores = {'BLEU-1': 0, 'BLEU-2': 0, 'BLEU-3': 0, 'BLEU-4': 0}
+    else:
+        bleu_scores = {'BLEU-1': 0, 'BLEU-2': 0, 'BLEU-3': 0, 'BLEU-4': 0}
+    
     # Print validation summary (only on main process)
-    if torch.distributed.is_initialized() and torch.distributed.get_rank() == 0:
-        print("\n" + "="*50)
+    if not torch.distributed.is_initialized() or torch.distributed.get_rank() == 0:
+        print("\n" + "="*70)
         print("Validation Summary:")
         print(f"Average Loss: {total_loss/max(total_tokens, 1):.4f}")
+        print(f"Samples evaluated: {len(all_predictions)}")
+        
+        # Print BLEU scores
+        print("\nCorpus BLEU Scores:")
+        for metric, score in bleu_scores.items():
+            print(f"  {metric}: {score*100:.2f}%")
+        
+        # Highlight the main research metric
+        main_bleu = bleu_scores['BLEU-4']
+        print(f"\n>>> Main Metric: Corpus BLEU-4 = {main_bleu*100:.2f}% <<<")
+        
         print("\nSample Translations:")
-        for i, (src, trans, ref) in enumerate(sample_translations, 1):
+        for i, (src, pred, ref) in enumerate(sample_translations, 1):
             print(f"\nExample {i}:")
-            print(f"Source:     {src}")
-            print(f"Generated:  {trans}")
-            print(f"Reference:  {ref}")
-        print("="*50 + "\n")
+            print(f"  Source:     {src}")
+            print(f"  Generated:  {pred}")
+            print(f"  Reference:  {ref}")
+        print("="*70 + "\n")
     
     # Log to tensorboard
     writer.add_scalar('val/loss', total_loss/max(total_tokens, 1), global_step)
+    writer.add_scalar('val/BLEU-4', main_bleu*100, global_step)
+    for metric, score in bleu_scores.items():
+        writer.add_scalar(f'val/{metric}', score*100, global_step)
     
     model.train()
     return total_loss/max(total_tokens, 1)
