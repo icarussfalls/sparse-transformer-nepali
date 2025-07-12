@@ -12,7 +12,7 @@ def get_config():
         'h': 8, # no of heads
         'dropout': 0.1,
         'use_sparse': False,
-        'use_adaptive_sparse': False, 
+        'use_adaptive_sparse': True, 
         'attn_type': "entmax_alpha", # entmax_alpha, entmax15, softmax|softmax is the vanilla option
         'visualize': True,    
         'sparse_block_size': 64,

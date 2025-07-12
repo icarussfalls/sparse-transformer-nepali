@@ -275,15 +275,28 @@ def train_model(config, model=None, train_dataloader=None, val_dataloader=None, 
     # tensorboard part
     writer = SummaryWriter(config['experiment_name'])
     
-    optimizer = torch.optim.Adam(model.parameters(), lr = config['lr'], eps=1e-9)
+    optimizer = torch.optim.Adam(model.parameters(), lr=config['lr'], eps=1e-9)
+    def get_lr_scheduler(optimizer, d_model, warmup_steps=4000):
+        """
+        Implements the learning rate schedule from the Transformer paper:
+        lrate = d_model^(-0.5) * min(step_num^(-0.5), step_num * warmup_steps^(-1.5))
+        """
+        def lr_lambda(current_step):
+            # Warmup + decay schedule
+            current_step = max(1, current_step)  # Prevent division by zero
+            factor = d_model ** (-0.5)
+            return factor * min(
+                current_step ** (-0.5),
+                current_step * warmup_steps ** (-1.5)
+            )
+        
+        return LambdaLR(optimizer, lr_lambda)
+    
+    scheduler = get_lr_scheduler(optimizer, config['d_model'])
 
-    # if model is specified before training, then need to load that
-    initial_epoch = 0
-    global_step = 0
-    preload = config['preload']
-    model_filename = latest_weight_file_path(config) if preload == 'latest' else get_weights_file_path(config, preload) if preload else None
+    # if loading from checkpoint, also load scheduler state
     if model_filename:
-        print(f'Preloading model {model_filename}') 
+        print(f'Preloading model {model_filename}')
         state = torch.load(model_filename, map_location=device)
         
         from collections import OrderedDict
@@ -294,6 +307,9 @@ def train_model(config, model=None, train_dataloader=None, val_dataloader=None, 
         model.load_state_dict(new_state_dict)
         initial_epoch = state['epoch'] + 1
         global_step = state['global_step']
+        if 'scheduler_state_dict' in state:
+            scheduler.load_state_dict(state['scheduler_state_dict'])
+    
     else:
         print(' No model to preload, starting from scratch')
 
@@ -323,11 +339,13 @@ def train_model(config, model=None, train_dataloader=None, val_dataloader=None, 
                 scaler.scale(loss).backward()
                 scaler.step(optimizer)
                 scaler.update()
+                scheduler.step()  # Update learning rate
             else:
                 proj_output = model(encoder_input, decoder_input, encoder_mask, decoder_mask)
                 loss = loss_fn(proj_output.view(-1, tokenizer_tgt.get_vocab_size()), label.view(-1))
                 loss.backward()
                 optimizer.step()
+                scheduler.step()  # Update learning rate
 
             batch_iterator.set_postfix({"loss": f"{loss.item():6.3f}"})
             writer.add_scalar('train_loss', loss.item(), global_step)
@@ -350,6 +368,7 @@ def train_model(config, model=None, train_dataloader=None, val_dataloader=None, 
                 'epoch': epoch,
                 'model_state_dict': model.state_dict(),
                 'optimizer_state_dict': optimizer.state_dict(),
+                'scheduler_state_dict': scheduler.state_dict(),
                 'global_step': global_step
             }, model_filename)
 
