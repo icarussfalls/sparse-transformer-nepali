@@ -192,30 +192,36 @@ class TokenizedResult:
         self.ids = ids
 
 def get_ds(config):
+    # Different random seed per process
+    if torch.distributed.is_initialized():
+        rank = torch.distributed.get_rank()
+        torch.manual_seed(42 + rank)  # Different seed per process
+    else:
+        torch.manual_seed(42)
+    
     # Load dataset
     ds_all = load_dataset(f"{config['data_source']}", "default", split='train')
     
-    # Shuffle and select subset
+    # Each process gets different subset
     total_len = len(ds_all)
     subset_size = int(0.1 * total_len)
     indices = torch.randperm(total_len).tolist()[:subset_size]
     ds_raw = ds_all.select(indices)
-    print(f"Using {subset_size} random samples out of {total_len}")
     
-    # FIRST: Split into train/val BEFORE building tokenizers
+    # Split data
     train_ds_size = int(len(ds_raw) * 0.9)
     val_ds_size = len(ds_raw) - train_ds_size
     train_ds_raw, val_ds_raw = random_split(ds_raw, [train_ds_size, val_ds_size])
     
-    # SECOND: Build tokenizers ONLY on training data
-    tokenizer_src = get_or_build_tokenizer(config, train_ds_raw, config['lang_src'])  # Only train data
-    tokenizer_tgt = get_or_build_tokenizer(config, train_ds_raw, config['lang_tgt'])  # Only train data
+    # Build tokenizers only on training data
+    tokenizer_src = get_or_build_tokenizer(config, train_ds_raw, config['lang_src'])
+    tokenizer_tgt = get_or_build_tokenizer(config, train_ds_raw, config['lang_tgt'])
+    
+    # # now 90% for training and remaning for validation
+    # train_ds_size = int(len(ds_all) * 0.9)
+    # val_ds_size = len(ds_all) - train_ds_size
 
-    # now 90% for training and remaning for validation
-    train_ds_size = int(len(ds_all) * 0.9)
-    val_ds_size = len(ds_all) - train_ds_size
-
-    train_ds_raw, val_ds_raw = random_split(ds_all, [train_ds_size, val_ds_size])
+    # train_ds_raw, val_ds_raw = random_split(ds_all, [train_ds_size, val_ds_size])
 
     train_ds = BilingualDataset(train_ds_raw, tokenizer_src, tokenizer_tgt, config['lang_src'], config['lang_tgt'], seq_len=config['seq_len'])
     val_ds = BilingualDataset(val_ds_raw, tokenizer_src, tokenizer_tgt, config['lang_src'], config['lang_tgt'], seq_len=config['seq_len'])

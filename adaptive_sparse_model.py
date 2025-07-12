@@ -91,7 +91,19 @@ class MultiHeadAttentionBlock(nn.Module):
         attn_scores = (query @ key.transpose(-2, -1)) / math.sqrt(self.d_k) # (B, h, L, L)
 
         if mask is not None:
-            attn_scores = attn_scores.masked_fill(mask==0, torch.finfo(attn_scores.dtype).min)
+            # mask should be (batch, heads, seq_len, seq_len) or (batch, 1, seq_len, seq_len)
+            if mask.dim() == 3:  # (batch, seq_len, seq_len)
+                mask = mask.unsqueeze(1)  # Add head dimension
+            elif mask.dim() == 2:  # (seq_len, seq_len)
+                mask = mask.unsqueeze(0).unsqueeze(0)  # Add batch and head dimensions
+            
+            # Ensure mask matches attention scores shape
+            if mask.size(-1) != attn_scores.size(-1):
+                print(f"Mask shape: {mask.shape}, Attention shape: {attn_scores.shape}")
+                # Handle shape mismatch
+                mask = mask[..., :attn_scores.size(-1)]  # Truncate if needed
+            
+            attn_scores = attn_scores.masked_fill(mask == 0, torch.finfo(attn_scores.dtype).min)
 
         # adaptive sparse transformers
         if self.attn_type == "softmax":

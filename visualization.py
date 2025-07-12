@@ -102,12 +102,18 @@ def visualize_attention_patterns(model, tokenizer_src, tokenizer_tgt, sample_tex
 
 def log_visualizations(model, tokenizer_src, tokenizer_tgt, global_step, save_dir='visualizations'):
     """this logs the visualizations during training"""
-    if hasattr(model, 'module'):
-        model_unwrapped = model.module
-    else:
-        model_unwrapped = model
+    # Skip visualization for now to avoid shape errors
+    print("Skipping visualizations - debugging shape mismatch...")
+    return
     
-    save_dir = f'{save_dir}/step_{global_step}'
-    visualize_alpha_values(model_unwrapped, save_dir)
-    sample_text = 'This is a sample input text to visualize attention.'
-    visualize_attention_patterns(model_unwrapped, tokenizer_src, tokenizer_tgt, sample_text, save_dir)
+    # TODO: Fix this after the shape error is resolved
+    # if hasattr(model, 'module'):
+    #     model_unwrapped = model.module
+    # else:
+    #     model_unwrapped = model
+    
+    # save_dir = f'{save_dir}/step_{global_step}'
+    
+    # visualize_alpha_values(model_unwrapped, save_dir)
+    # sample_text = 'This is a sample input text to visualize attention.'
+    # visualize_attention_patterns(model_unwrapped, tokenizer_src, tokenizer_tgt, sample_text, save_dir)
