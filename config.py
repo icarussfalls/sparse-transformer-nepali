@@ -2,15 +2,15 @@ from pathlib import Path
 
 def get_config():
     return {
-        'batch_size': 16,  # Increased as we'll use gradient accumulation
-        'gradient_accumulation_steps': 4,  # Increase steps to maintain effective batch size
+        'batch_size': 32,  # Increased from 16
+        'gradient_accumulation_steps': 2,  # Reduced from 4
         'gradient_checkpointing': True,
         'num_epochs' : 20,
         'lr': 10**-4,
         'seq_len': 300, # 600 original, max seq len in our data is <500 so
         'd_model' : 512, # 512 original
         'd_ff' : 2048, # 2048 original # this is in feed forward layers
-        'N': 8, # no of encoders/decoders,
+        'N': 6, # no of encoders/decoders, Reduced from 8 for faster iterations
         'h': 8, # no of heads
         'dropout': 0.1,
         'use_sparse': False,

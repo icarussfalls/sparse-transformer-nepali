@@ -50,6 +50,20 @@ def train_ddp(rank, world_size, config):
         # Update config with current GPU
         config['gpu'] = rank
         
+        train_sampler = DistributedSampler(train_dataloader.dataset, num_replicas=world_size, rank=rank)
+        train_dataloader = torch.utils.data.DataLoader(
+            train_dataloader.dataset,
+            batch_size=config['batch_size'],
+            sampler=train_sampler,
+            num_workers=4,  # Increased from default
+            pin_memory=True,
+            prefetch_factor=2,  # Add prefetching
+            persistent_workers=True  # Keep workers alive
+        )
+        
+        # Enable cudNN benchmarking for better performance
+        torch.backends.cudnn.benchmark = True
+        
         # Train the model
         train_model(
             config, 

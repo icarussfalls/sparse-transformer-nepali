@@ -261,10 +261,10 @@ def train_model(config, model=None, train_dataloader=None, val_dataloader=None, 
 
     for epoch in range(initial_epoch, config['num_epochs']):
         model.train()
-        total_loss = 0
+        accumulated_loss = 0  # Initialize here
         batch_iterator = tqdm(train_dataloader, desc=f"Processing epoch {epoch:02d}")
         
-        # Add epoch statistics
+        # Initialize epoch statistics
         epoch_stats = {
             'loss': 0.0,
             'steps': 0,
@@ -292,6 +292,9 @@ def train_model(config, model=None, train_dataloader=None, val_dataloader=None, 
 
                 # Update weights if we've accumulated enough steps
                 if (i + 1) % config['gradient_accumulation_steps'] == 0:
+                    epoch_stats['steps'] += 1  # Increment before division
+                    epoch_stats['loss'] += accumulated_loss
+
                     # Unscale gradients for any gradient clipping
                     scaler.unscale_(optimizer)
                     torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm=1.0)
@@ -321,10 +324,11 @@ def train_model(config, model=None, train_dataloader=None, val_dataloader=None, 
                     global_step += 1
         
         # End of epoch logging
-        avg_loss = epoch_stats['loss'] / epoch_stats['steps']
+        avg_loss = epoch_stats['loss'] / max(epoch_stats['steps'], 1)  # Prevent division by zero
         print(f"\nEpoch {epoch} Summary:")
         print(f"Average Loss: {avg_loss:.4f}")
         print(f"Learning Rate: {epoch_stats['lr']:.6f}")
+        print_gpu_memory()  # Add memory monitoring
         
         # Run validation
         if epoch % 2 == 0:  # Validate every 2 epochs
@@ -351,8 +355,10 @@ def train_model(config, model=None, train_dataloader=None, val_dataloader=None, 
 
 def print_gpu_memory():
     """Print GPU memory usage"""
-    print(f"GPU memory allocated: {torch.cuda.memory_allocated() / 1e9:.2f} GB")
-    print(f"GPU memory cached: {torch.cuda.memory_reserved() / 1e9:.2f} GB")
+    allocated = torch.cuda.memory_allocated() / 1e9
+    reserved = torch.cuda.memory_reserved() / 1e9
+    print(f"GPU memory allocated: {allocated:.2f} GB")
+    print(f"GPU memory reserved: {reserved:.2f} GB")
 
 def translate_sample(model, tokenizer_src, tokenizer_tgt, device, print_msg):
     sample_text = "This is a test sentence."
