@@ -136,8 +136,23 @@ def get_ds(config):
     
     # we find the max length to decide seq_len that is large enough to cover most sentences, but not so large that memory is wasted on padding
 
-    train_dataloader = DataLoader(train_ds, batch_size=config['batch_size'], shuffle=True)
-    val_dataloader = DataLoader(val_ds, batch_size=1, shuffle=True)
+    # Create DataLoaders with appropriate batch sizes
+    train_dataloader = DataLoader(
+        train_ds, 
+        batch_size=config['batch_size'], 
+        shuffle=True,
+        num_workers=4,
+        pin_memory=True
+    )
+    
+    val_dataloader = DataLoader(
+        val_ds, 
+        batch_size=config['val_batch_size'],  # Use validation batch size
+        shuffle=False,  # No need to shuffle validation
+        num_workers=4,
+        pin_memory=True
+    )
+    
     return train_dataloader, val_dataloader, tokenizer_src, tokenizer_tgt
 
 
@@ -161,31 +176,40 @@ def run_validation(model, val_dataloader, tokenizer_src, tokenizer_tgt, seq_len,
     total_loss = 0
     total_tokens = 0
     
-    with torch.no_grad():
+    # Use torch.cuda.amp for validation too
+    with torch.no_grad(), torch.cuda.amp.autocast():
         val_bar = tqdm(val_dataloader, desc="Validation")
         for batch in val_bar:
-            encoder_input = batch['encoder_input'].to(device)
-            decoder_input = batch['decoder_input'].to(device)
-            encoder_mask = batch['encoder_mask'].to(device)
-            decoder_mask = batch['decoder_mask'].to(device)
-            label = batch['label'].to(device)
+            # Move all tensors to device at once
+            batch = {k: v.to(device, non_blocking=True) for k, v in batch.items()}
             
             # Forward pass
-            with autocast():
-                proj_output = model(encoder_input, decoder_input, encoder_mask, decoder_mask)
-                loss = loss_fn(proj_output.view(-1, tokenizer_tgt.get_vocab_size()), label.view(-1))
+            proj_output = model(
+                batch['encoder_input'],
+                batch['decoder_input'],
+                batch['encoder_mask'],
+                batch['decoder_mask']
+            )
             
+            loss = loss_fn(
+                proj_output.view(-1, tokenizer_tgt.get_vocab_size()),
+                batch['label'].view(-1)
+            )
+            
+            # Calculate loss and number of tokens
             total_loss += loss.item()
-            total_tokens += label.ne(tokenizer_tgt.token_to_id('[PAD]')).sum().item()
+            total_tokens += batch['label'].ne(tokenizer_tgt.token_to_id('[PAD]')).sum().item()
             
-            val_bar.set_postfix({'val_loss': f"{total_loss/total_tokens:.4f}"})
+            # Update progress bar
+            val_bar.set_postfix({
+                'val_loss': f"{total_loss/total_tokens:.4f}"
+            })
     
-    # Log validation metrics
     avg_loss = total_loss / total_tokens
     writer.add_scalar('val/loss', avg_loss, global_step)
     
-    # Generate a sample translation
-    if print_msg:
+    # Only do sample translation on main process
+    if torch.distributed.get_rank() == 0 and print_msg:
         translate_sample(model, tokenizer_src, tokenizer_tgt, device, print_msg)
     
     model.train()

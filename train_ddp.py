@@ -4,6 +4,7 @@ import torch.distributed as dist
 import torch.multiprocessing as mp
 from torch.nn.parallel import DistributedDataParallel as DDP
 from torch.utils.data.distributed import DistributedSampler
+from torch.utils.data import DataLoader  # Add this import
 from train import get_model, get_ds, train_model
 from config import get_config
 
@@ -59,6 +60,22 @@ def train_ddp(rank, world_size, config):
             pin_memory=True,
             prefetch_factor=2,  # Add prefetching
             persistent_workers=True  # Keep workers alive
+        )
+        
+        # Create validation dataloader with DDP
+        val_sampler = DistributedSampler(
+            val_dataloader.dataset,
+            num_replicas=world_size,
+            rank=rank,
+            shuffle=False  # No need to shuffle validation
+        )
+        
+        val_dataloader = DataLoader(
+            val_dataloader.dataset,
+            batch_size=config['val_batch_size'],
+            sampler=val_sampler,
+            num_workers=4,
+            pin_memory=True
         )
         
         # Enable cudNN benchmarking for better performance
