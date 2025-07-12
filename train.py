@@ -275,7 +275,16 @@ def train_model(config, model=None, train_dataloader=None, val_dataloader=None, 
     # tensorboard part
     writer = SummaryWriter(config['experiment_name'])
     
+    # Get the model filename for preloading
+    model_filename = None
+    if config['preload'] == 'latest':
+        model_filename = latest_weight_file_path(config)
+    elif config['preload']:  # If preload is a specific filename
+        model_filename = get_weights_file_path(config, config['preload'])
+    
+    # Create optimizer and scheduler
     optimizer = torch.optim.Adam(model.parameters(), lr=config['lr'], eps=1e-9)
+    
     def get_lr_scheduler(optimizer, d_model, warmup_steps=4000):
         """
         Implements the learning rate schedule from the Transformer paper:
@@ -291,27 +300,30 @@ def train_model(config, model=None, train_dataloader=None, val_dataloader=None, 
             )
         
         return LambdaLR(optimizer, lr_lambda)
-    
     scheduler = get_lr_scheduler(optimizer, config['d_model'])
 
-    # if loading from checkpoint, also load scheduler state
-    if model_filename:
+    # Initialize epoch and global_step
+    initial_epoch = 0
+    global_step = 0
+
+    # Load checkpoint if exists
+    if model_filename and os.path.exists(model_filename):
         print(f'Preloading model {model_filename}')
         state = torch.load(model_filename, map_location=device)
         
         from collections import OrderedDict
         new_state_dict = OrderedDict()
         for k, v in state['model_state_dict'].items():
-            name = k[7:] if k.startswith('module.') else k  # remove 'module.' if it exists
+            name = k[7:] if k.startswith('module.') else k
             new_state_dict[name] = v
+            
         model.load_state_dict(new_state_dict)
         initial_epoch = state['epoch'] + 1
-        global_step = state['global_step']
+        global_step = state.get('global_step', 0)
         if 'scheduler_state_dict' in state:
             scheduler.load_state_dict(state['scheduler_state_dict'])
-    
     else:
-        print(' No model to preload, starting from scratch')
+        print('No model to preload, starting from scratch')
 
     loss_fn = nn.CrossEntropyLoss(ignore_index=tokenizer_src.token_to_id('[PAD]'), label_smoothing=0.1).to(device)
 
