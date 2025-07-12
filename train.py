@@ -84,7 +84,7 @@ def get_or_build_tokenizer(config, ds, lang):
     
     # Only main process builds the tokenizer
     if is_main_process and not tokenizer_path.exists():
-        print(f"Building SentencePiece tokenizer for {lang}...")
+        print(f"Building SentencePiece tokenizer for {lang} on {len(ds)} samples...")
         
         # Create temporary text file for training
         temp_file = f"temp_{lang}.txt"
@@ -93,6 +93,11 @@ def get_or_build_tokenizer(config, ds, lang):
                 text = item[lang].strip()
                 if text:  # Only add non-empty lines
                     f.write(text + '\n')
+        
+        # Verify temp file
+        with open(temp_file, 'r', encoding='utf-8') as f:
+            line_count = sum(1 for _ in f)
+            print(f"Tokenizer training file for {lang}: {line_count} lines")
         
         # Train SentencePiece model
         spm.SentencePieceTrainer.train(
@@ -220,7 +225,7 @@ def get_ds(config):
         # Take first subset_size indices
         subset_indices = all_indices[:subset_size]
         
-        # Split subset into train/val
+        # Split subset into train/val BEFORE building tokenizers
         train_size = int(len(subset_indices) * 0.9)
         train_indices = subset_indices[:train_size]
         val_indices = subset_indices[train_size:]
@@ -228,15 +233,20 @@ def get_ds(config):
         # Save indices for all processes
         indices_dict = {
             'train_indices': train_indices,
-            'val_indices': val_indices
+            'val_indices': val_indices,
+            'subset_size': subset_size,
+            'train_size': len(train_indices),
+            'val_size': len(val_indices)
         }
         torch.save(indices_dict, 'data_splits.pt')
         
         print(f"Selected {len(subset_indices)} samples")
         print(f"Train: {len(train_indices)}, Val: {len(val_indices)}")
         
-        # Build tokenizers ONLY on training data
+        # Build tokenizers ONLY on training data (MAIN PROCESS ONLY!)
         train_ds_raw = ds_all.select(train_indices)
+        print(f"Building tokenizers on {len(train_indices)} TRAINING samples only")
+        
         tokenizer_src = get_or_build_tokenizer(config, train_ds_raw, config['lang_src'])
         tokenizer_tgt = get_or_build_tokenizer(config, train_ds_raw, config['lang_tgt'])
         
@@ -251,6 +261,15 @@ def get_ds(config):
         
         print(f'Max length of source sentence: {max_len_src}')
         print(f'Max length of target sentences: {max_len_tgt}')
+        
+        # Verify no overlap between train and val
+        train_set = set(train_indices)
+        val_set = set(val_indices)
+        overlap = train_set.intersection(val_set)
+        print(f"Data overlap check: {len(overlap)} overlapping samples (should be 0)")
+        if len(overlap) > 0:
+            print("ERROR: Data leakage detected!")
+            raise ValueError("Training and validation sets overlap!")
     
     # Wait for main process to finish
     if torch.distributed.is_initialized():
@@ -264,13 +283,20 @@ def get_ds(config):
     train_indices = indices_dict['train_indices']
     val_indices = indices_dict['val_indices']
     
+    print(f"Process {rank}: Train indices: {len(train_indices)}, Val indices: {len(val_indices)}")
+    
     # Create datasets using the same splits
     train_ds_raw = ds_all.select(train_indices)
     val_ds_raw = ds_all.select(val_indices)
     
-    # Load tokenizers (should exist from main process)
-    tokenizer_src = get_or_build_tokenizer(config, train_ds_raw, config['lang_src'])
-    tokenizer_tgt = get_or_build_tokenizer(config, train_ds_raw, config['lang_tgt'])
+    # NON-MAIN PROCESSES: Load existing tokenizers (don't build!)
+    if not is_main_process:
+        # Just load the existing tokenizer files
+        tokenizer_src = load_existing_tokenizer(config['lang_src'])
+        tokenizer_tgt = load_existing_tokenizer(config['lang_tgt'])
+    else:
+        # Main process already built them above
+        pass
     
     # Create BilingualDataset objects
     train_ds = BilingualDataset(train_ds_raw, tokenizer_src, tokenizer_tgt, 
@@ -319,6 +345,15 @@ def get_ds(config):
     
     return train_dataloader, val_dataloader, tokenizer_src, tokenizer_tgt
 
+def load_existing_tokenizer(lang):
+    """Load existing tokenizer for non-main processes"""
+    tokenizer_path = Path(f"tokenizer_{lang}.model")
+    if not tokenizer_path.exists():
+        raise FileNotFoundError(f"Tokenizer not found: {tokenizer_path}")
+    
+    sp = spm.SentencePieceProcessor()
+    sp.load(str(tokenizer_path))
+    return SentencePieceTokenizer(sp)
 
 def get_model(config, vocab_src_len, vocab_tgt_len):
     # (src_vocab_size: int, tgt_vocab_size: int, src_seq_len: int, tgt_seq_len: int, d_model: int, N: int, h: int, dropout: float, d_ff: int = None
