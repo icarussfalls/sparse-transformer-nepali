@@ -341,31 +341,36 @@ def train_model(config, model=None, train_dataloader=None, val_dataloader=None, 
         optimizer.zero_grad()
 
         for i, batch in enumerate(batch_iterator):
-            encoder_input = batch['encoder_input'].to(device)
-            decoder_input = batch['decoder_input'].to(device)
-            encoder_mask = batch['encoder_mask'].to(device)
-            decoder_mask = batch['decoder_mask'].to(device)
-            label = batch['label'].to(device)
+            # Move to GPU and clear previous gradients
+            encoder_input = batch['encoder_input'].to(device, non_blocking=True)
+            decoder_input = batch['decoder_input'].to(device, non_blocking=True)
+            encoder_mask = batch['encoder_mask'].to(device, non_blocking=True)
+            decoder_mask = batch['decoder_mask'].to(device, non_blocking=True)
+            label = batch['label'].to(device, non_blocking=True)
 
-            # Forward pass
+            # Forward pass with memory optimization
             if scaler is not None:
                 with autocast():
                     proj_output = model(encoder_input, decoder_input, encoder_mask, decoder_mask)
                     loss = loss_fn(proj_output.view(-1, tokenizer_tgt.get_vocab_size()), label.view(-1))
-                    loss = loss / config['gradient_accumulation_steps']  # Normalize loss
-                
+                    loss = loss / config['gradient_accumulation_steps']
+
                 # Backward pass
                 scaler.scale(loss).backward()
                 accumulated_loss += loss.item()
-                
+
                 # Update weights if we've accumulated enough steps
                 if (i + 1) % config['gradient_accumulation_steps'] == 0:
+                    # Unscale gradients for any gradient clipping
+                    scaler.unscale_(optimizer)
+                    torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm=1.0)
+                    
                     scaler.step(optimizer)
                     scaler.update()
                     scheduler.step()
-                    optimizer.zero_grad()
+                    optimizer.zero_grad(set_to_none=True)  # More efficient than zero_grad()
                     
-                    # Log metrics
+                    # Log metrics and clear memory
                     batch_iterator.set_postfix({
                         "loss": f"{accumulated_loss:.3f}",
                         "lr": f"{scheduler.get_last_lr()[0]:.6f}"
@@ -373,8 +378,14 @@ def train_model(config, model=None, train_dataloader=None, val_dataloader=None, 
                     writer.add_scalar('train_loss', accumulated_loss, global_step)
                     accumulated_loss = 0
                     global_step += 1
-            
-            # ... rest of the training loop
+                    
+                    # Clear cache periodically
+                    if i % 50 == 0:
+                        torch.cuda.empty_cache()
+
+            # Clear tensors from memory
+            del encoder_input, decoder_input, encoder_mask, decoder_mask, label
+            torch.cuda.empty_cache()
 
         # run validation at the end of every epochs
         run_validation(model, val_dataloader, tokenizer_src, tokenizer_tgt, config['seq_len'], device, lambda msg: batch_iterator.write(msg), global_step, writer)
@@ -394,4 +405,9 @@ def train_model(config, model=None, train_dataloader=None, val_dataloader=None, 
                 'scheduler_state_dict': scheduler.state_dict(),
                 'global_step': global_step
             }, model_filename)
+
+def print_gpu_memory():
+    """Print GPU memory usage"""
+    print(f"GPU memory allocated: {torch.cuda.memory_allocated() / 1e9:.2f} GB")
+    print(f"GPU memory cached: {torch.cuda.memory_reserved() / 1e9:.2f} GB")
 

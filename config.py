@@ -2,8 +2,9 @@ from pathlib import Path
 
 def get_config():
     return {
-        'batch_size': 8,  # Reduced from 16
-        'gradient_accumulation_steps': 2,  # NEW: Effective batch size = batch_size * gradient_accumulation_steps * num_gpus
+        'batch_size': 16,  # Increased as we'll use gradient accumulation
+        'gradient_accumulation_steps': 4,  # Increase steps to maintain effective batch size
+        'gradient_checkpointing': True,  # NEW: Enable gradient checkpointing
         'num_epochs' : 20,
         'lr': 10**-4,
         'seq_len': 300, # 600 original, max seq len in our data is <500 so

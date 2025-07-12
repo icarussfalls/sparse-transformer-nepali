@@ -45,10 +45,17 @@ def train_ddp(rank, world_size, config):
         
         # Create model and move to GPU
         model = get_model(config, tokenizer_src.get_vocab_size(), tokenizer_tgt.get_vocab_size())
+        if config['gradient_checkpointing']:
+            model.gradient_checkpointing_enable()
         model = model.to(rank)
         
-        # Wrap model in DDP
-        ddp_model = DDP(model, device_ids=[rank], find_unused_parameters=True)
+        # Wrap model in DDP with memory-efficient settings
+        ddp_model = DDP(
+            model, 
+            device_ids=[rank],
+            find_unused_parameters=False,  # Disable if not needed
+            static_graph=True  # Enable for better memory efficiency
+        )
         
         # Update config with current GPU
         config['gpu'] = rank
