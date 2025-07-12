@@ -82,19 +82,6 @@ def get_or_build_tokenizer(config, ds, lang):
         tokenizer = Tokenizer.from_file(str(tokenizer_path))
     return tokenizer
 
-def get_or_build_tokenizer(config, ds, lang):
-    tokenizer_path = Path(config['tokenizer_file'].format(lang))
-    if not Path.exists(tokenizer_path):
-        # Most code taken from: https://huggingface.co/docs/tokenizers/quicktour
-        tokenizer = Tokenizer(WordLevel(unk_token="[UNK]"))
-        tokenizer.pre_tokenizer = Whitespace()
-        trainer = WordLevelTrainer(special_tokens=["[UNK]", "[PAD]", "[SOS]", "[EOS]"], min_frequency=2)
-        tokenizer.train_from_iterator(get_all_sentences(ds, lang), trainer=trainer)
-        tokenizer.save(str(tokenizer_path))
-    else:
-        tokenizer = Tokenizer.from_file(str(tokenizer_path))
-    return tokenizer
-
 def get_ds(config):
     # the data only has train split so
     ds_all = load_dataset(f"{config['data_source']}", "default", split='train')
@@ -182,23 +169,23 @@ def run_validation(model, val_dataloader, tokenizer_src, tokenizer_tgt, seq_len,
     sample_translations = []
     
     with torch.no_grad():
-        val_bar = tqdm(val_dataloader, desc="Validation")
+        # Only show progress bar on main process
+        is_main_process = not torch.distributed.is_initialized() or torch.distributed.get_rank() == 0
+        
+        if is_main_process:
+            val_bar = tqdm(val_dataloader, desc="Validation")
+        else:
+            val_bar = val_dataloader
+            
         for batch_idx, batch in enumerate(val_bar):
             # Handle batch format
-            if isinstance(batch, list):
-                encoder_input = batch[0].to(device, non_blocking=True)
-                decoder_input = batch[1].to(device, non_blocking=True)
-                encoder_mask = batch[2].to(device, non_blocking=True)
-                decoder_mask = batch[3].to(device, non_blocking=True)
-                label = batch[4].to(device, non_blocking=True)
-            else:
-                encoder_input = batch['encoder_input'].to(device, non_blocking=True)
-                decoder_input = batch['decoder_input'].to(device, non_blocking=True)
-                encoder_mask = batch['encoder_mask'].to(device, non_blocking=True)
-                decoder_mask = batch['decoder_mask'].to(device, non_blocking=True)
-                label = batch['label'].to(device, non_blocking=True)
+            encoder_input = batch['encoder_input'].to(device, non_blocking=True)
+            decoder_input = batch['decoder_input'].to(device, non_blocking=True)
+            encoder_mask = batch['encoder_mask'].to(device, non_blocking=True)
+            decoder_mask = batch['decoder_mask'].to(device, non_blocking=True)
+            label = batch['label'].to(device, non_blocking=True)
             
-            # Forward pass
+            # Forward pass (no autocast for validation)
             proj_output = model(encoder_input, decoder_input, encoder_mask, decoder_mask)
             loss = loss_fn(
                 proj_output.view(-1, tokenizer_tgt.get_vocab_size()),
@@ -208,33 +195,34 @@ def run_validation(model, val_dataloader, tokenizer_src, tokenizer_tgt, seq_len,
             total_loss += loss.item()
             total_tokens += label.ne(tokenizer_tgt.token_to_id('[PAD]')).sum().item()
             
-            # Get predictions for BLEU calculation (keep on GPU)
+            # Get predictions for BLEU calculation
             pred_tokens = torch.argmax(proj_output, dim=-1)
             
-            # Get special token IDs as tensors on GPU
+            # Get special token IDs
             pad_id = tokenizer_tgt.token_to_id('[PAD]')
             sos_id = tokenizer_tgt.token_to_id('[SOS]')
             eos_id = tokenizer_tgt.token_to_id('[EOS]')
             
-            # Process batch on GPU
+            # Process each sample in the batch
             for i in range(encoder_input.size(0)):
-                # Remove special tokens on GPU
-                ref_tokens = label[i]
-                pred_tokens_i = pred_tokens[i]
-                
-                # Create masks on GPU
-                ref_mask = (ref_tokens != pad_id) & (ref_tokens != sos_id) & (ref_tokens != eos_id)
-                pred_mask = (pred_tokens_i != pad_id) & (pred_tokens_i != sos_id) & (pred_tokens_i != eos_id)
-                
-                # Apply masks and get clean tokens
-                ref_clean = ref_tokens[ref_mask]
-                pred_clean = pred_tokens_i[pred_mask]
-                
-                # Only move to CPU for decoding (minimal transfer)
-                if ref_clean.numel() > 0 and pred_clean.numel() > 0:
-                    try:
-                        ref_text = tokenizer_tgt.decode(ref_clean.cpu().numpy())
-                        pred_text = tokenizer_tgt.decode(pred_clean.cpu().numpy())
+                try:
+                    # Get reference and prediction tokens
+                    ref_tokens = label[i].cpu().numpy()
+                    pred_tokens_i = pred_tokens[i].cpu().numpy()
+                    
+                    # Remove special tokens
+                    ref_tokens = ref_tokens[ref_tokens != pad_id]
+                    ref_tokens = ref_tokens[ref_tokens != sos_id] 
+                    ref_tokens = ref_tokens[ref_tokens != eos_id]
+                    
+                    pred_tokens_i = pred_tokens_i[pred_tokens_i != pad_id]
+                    pred_tokens_i = pred_tokens_i[pred_tokens_i != sos_id]
+                    pred_tokens_i = pred_tokens_i[pred_tokens_i != eos_id]
+                    
+                    if len(ref_tokens) > 0 and len(pred_tokens_i) > 0:
+                        # Decode tokens to text
+                        ref_text = tokenizer_tgt.decode(ref_tokens)
+                        pred_text = tokenizer_tgt.decode(pred_tokens_i)
                         
                         # Split into words for BLEU calculation
                         ref_words = ref_text.split()
@@ -244,25 +232,27 @@ def run_validation(model, val_dataloader, tokenizer_src, tokenizer_tgt, seq_len,
                             all_references.append([ref_words])
                             all_predictions.append(pred_words)
                             
-                            # Store sample translations for display (first 3 examples)
+                            # Store sample translations (first 3 examples)
                             if len(sample_translations) < 3:
-                                src_tokens = encoder_input[i]
-                                src_mask = (src_tokens != tokenizer_src.token_to_id('[PAD]'))
-                                src_clean = src_tokens[src_mask]
-                                src_text = tokenizer_src.decode(src_clean.cpu().numpy())
+                                src_tokens = encoder_input[i].cpu().numpy()
+                                src_tokens = src_tokens[src_tokens != tokenizer_src.token_to_id('[PAD]')]
+                                src_text = tokenizer_src.decode(src_tokens)
                                 sample_translations.append((src_text, pred_text, ref_text))
                                 
-                    except Exception as e:
-                        # Skip this sample if decoding fails
-                        continue
+                except Exception as e:
+                    # Skip this sample if decoding fails
+                    continue
             
-            val_bar.set_postfix({
-                'val_loss': f"{total_loss/max(total_tokens, 1):.4f}"
-            })
+            # Update progress bar only on main process
+            if is_main_process:
+                val_bar.set_postfix({
+                    'val_loss': f"{total_loss/max(total_tokens, 1):.4f}",
+                    'samples': len(all_predictions)
+                })
     
     # Calculate corpus-level BLEU scores
     bleu_scores = {}
-    main_bleu = 0  # Initialize main_bleu with default value
+    main_bleu = 0
     
     if len(all_predictions) > 0 and len(all_references) > 0:
         smoothing = SmoothingFunction().method1
@@ -271,7 +261,7 @@ def run_validation(model, val_dataloader, tokenizer_src, tokenizer_tgt, seq_len,
             bleu_scores['BLEU-2'] = corpus_bleu(all_references, all_predictions, weights=(0.5, 0.5, 0, 0), smoothing_function=smoothing)
             bleu_scores['BLEU-3'] = corpus_bleu(all_references, all_predictions, weights=(0.33, 0.33, 0.33, 0), smoothing_function=smoothing)
             bleu_scores['BLEU-4'] = corpus_bleu(all_references, all_predictions, weights=(0.25, 0.25, 0.25, 0.25), smoothing_function=smoothing)
-            main_bleu = bleu_scores['BLEU-4']  # Set main_bleu after successful calculation
+            main_bleu = bleu_scores['BLEU-4']
         except Exception as e:
             print(f"Error calculating BLEU: {e}")
             bleu_scores = {'BLEU-1': 0, 'BLEU-2': 0, 'BLEU-3': 0, 'BLEU-4': 0}
@@ -281,7 +271,7 @@ def run_validation(model, val_dataloader, tokenizer_src, tokenizer_tgt, seq_len,
         main_bleu = 0
     
     # Print validation summary (only on main process)
-    if not torch.distributed.is_initialized() or torch.distributed.get_rank() == 0:
+    if is_main_process:
         print("\n" + "="*70)
         print("Validation Summary:")
         print(f"Average Loss: {total_loss/max(total_tokens, 1):.4f}")
@@ -292,7 +282,6 @@ def run_validation(model, val_dataloader, tokenizer_src, tokenizer_tgt, seq_len,
         for metric, score in bleu_scores.items():
             print(f"  {metric}: {score*100:.2f}%")
         
-        # Highlight the main research metric
         print(f"\n>>> Main Metric: Corpus BLEU-4 = {main_bleu*100:.2f}% <<<")
         
         print("\nSample Translations:")
@@ -303,11 +292,12 @@ def run_validation(model, val_dataloader, tokenizer_src, tokenizer_tgt, seq_len,
             print(f"  Reference:  {ref}")
         print("="*70 + "\n")
     
-    # Log to tensorboard
-    writer.add_scalar('val/loss', total_loss/max(total_tokens, 1), global_step)
-    writer.add_scalar('val/BLEU-4', main_bleu*100, global_step)
-    for metric, score in bleu_scores.items():
-        writer.add_scalar(f'val/{metric}', score*100, global_step)
+    # Log to tensorboard (only if writer exists)
+    if writer:
+        writer.add_scalar('val/loss', total_loss/max(total_tokens, 1), global_step)
+        writer.add_scalar('val/BLEU-4', main_bleu*100, global_step)
+        for metric, score in bleu_scores.items():
+            writer.add_scalar(f'val/{metric}', score*100, global_step)
     
     model.train()
     return total_loss/max(total_tokens, 1)
