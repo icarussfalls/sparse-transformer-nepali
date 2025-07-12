@@ -389,15 +389,25 @@ def print_gpu_memory():
     print(f"GPU memory reserved: {reserved:.2f} GB")
 
 def translate_sample(model, tokenizer_src, tokenizer_tgt, device, print_msg):
+    """Generate a sample translation during validation"""
     sample_text = "This is a test sentence."
     print_msg("\nSample Translation:")
     print_msg(f"Source: {sample_text}")
     
+    # Use config's sequence length as max_len
+    max_len = model.module.decoder.max_seq_len if hasattr(model, 'module') else model.decoder.max_seq_len
+    
     # Tokenize and translate
     model.eval()
     with torch.no_grad():
-        # Implement your translation logic here
-        translated = greedy_decode(model, sample_text, tokenizer_src, tokenizer_tgt, device)
+        translated = greedy_decode(
+            model, 
+            sample_text, 
+            tokenizer_src, 
+            tokenizer_tgt, 
+            max_len=max_len,  # Add max_len argument
+            device=device     # Add device argument
+        )
     
     print_msg(f"Translation: {translated}\n")
     model.train()
