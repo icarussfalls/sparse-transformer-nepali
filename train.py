@@ -175,29 +175,28 @@ def run_validation(model, val_dataloader, tokenizer_src, tokenizer_tgt, seq_len,
     model.eval()
     total_loss = 0
     total_tokens = 0
-    translations = []
-    references = []
     
-    with torch.no_grad(), torch.amp.autocast(device_type='cuda'):
+    # Only do sample translations once per validation, not for every batch
+    sample_translations = []
+    
+    with torch.no_grad():  # Remove autocast for validation
         val_bar = tqdm(val_dataloader, desc="Validation")
-        for batch in val_bar:
-            # Ensure batch data is in correct format
+        for batch_idx, batch in enumerate(val_bar):
+            # Handle batch format
             if isinstance(batch, list):
-                # Handle list-type batch
                 encoder_input = batch[0].to(device, non_blocking=True)
                 decoder_input = batch[1].to(device, non_blocking=True)
                 encoder_mask = batch[2].to(device, non_blocking=True)
                 decoder_mask = batch[3].to(device, non_blocking=True)
                 label = batch[4].to(device, non_blocking=True)
             else:
-                # Handle dict-type batch
                 encoder_input = batch['encoder_input'].to(device, non_blocking=True)
                 decoder_input = batch['decoder_input'].to(device, non_blocking=True)
                 encoder_mask = batch['encoder_mask'].to(device, non_blocking=True)
                 decoder_mask = batch['decoder_mask'].to(device, non_blocking=True)
                 label = batch['label'].to(device, non_blocking=True)
             
-            # Forward pass
+            # Forward pass (no autocast needed for validation)
             proj_output = model(encoder_input, decoder_input, encoder_mask, decoder_mask)
             loss = loss_fn(
                 proj_output.view(-1, tokenizer_tgt.get_vocab_size()),
@@ -207,38 +206,44 @@ def run_validation(model, val_dataloader, tokenizer_src, tokenizer_tgt, seq_len,
             total_loss += loss.item()
             total_tokens += label.ne(tokenizer_tgt.token_to_id('[PAD]')).sum().item()
             
-            # Store translations and references for BLEU score
-            if len(translations) < 5:  # Store first 5 examples for display
-                src_text = tokenizer_src.decode(encoder_input[0].cpu().numpy())
-                tgt_text = tokenizer_tgt.decode(label[0].cpu().numpy())
-                with torch.no_grad():
-                    translated = greedy_decode(
-                        model,
-                        encoder_input[0].unsqueeze(0),
-                        encoder_mask[0].unsqueeze(0),
-                        tokenizer_src,
-                        tokenizer_tgt,
-                        seq_len,
-                        device
-                    )
-                translated_text = tokenizer_tgt.decode(translated.cpu().numpy())
-                translations.append((src_text, translated_text, tgt_text))
+            # Only do sample translations for the first batch and first 2 samples
+            if batch_idx == 0 and len(sample_translations) < 2:
+                for i in range(min(2, encoder_input.size(0))):
+                    if len(sample_translations) < 2:
+                        # Quick translation without full greedy decode
+                        src_tokens = encoder_input[i].cpu().numpy()
+                        tgt_tokens = label[i].cpu().numpy()
+                        
+                        # Remove padding and special tokens for cleaner output
+                        src_tokens = src_tokens[src_tokens != tokenizer_src.token_to_id('[PAD]')]
+                        tgt_tokens = tgt_tokens[tgt_tokens != tokenizer_tgt.token_to_id('[PAD]')]
+                        
+                        src_text = tokenizer_src.decode(src_tokens)
+                        tgt_text = tokenizer_tgt.decode(tgt_tokens)
+                        
+                        # Simple prediction from model output (no greedy decode)
+                        pred_tokens = torch.argmax(proj_output[i], dim=-1).cpu().numpy()
+                        pred_tokens = pred_tokens[pred_tokens != tokenizer_tgt.token_to_id('[PAD]')]
+                        pred_text = tokenizer_tgt.decode(pred_tokens)
+                        
+                        sample_translations.append((src_text, pred_text, tgt_text))
             
             val_bar.set_postfix({
                 'val_loss': f"{total_loss/max(total_tokens, 1):.4f}"
             })
     
-    # Print validation summary
-    print("\n" + "="*50)
-    print("Validation Summary:")
-    print(f"Average Loss: {total_loss/max(total_tokens, 1):.4f}")
-    print("\nSample Translations:")
-    for i, (src, trans, ref) in enumerate(translations, 1):
-        print(f"\nExample {i}:")
-        print(f"Source:     {src}")
-        print(f"Generated:  {trans}")
-        print(f"Reference:  {ref}")
-    print("="*50 + "\n")
+    # Print validation summary (only on main process)
+    if torch.distributed.is_initialized() and torch.distributed.get_rank() == 0:
+        print("\n" + "="*50)
+        print("Validation Summary:")
+        print(f"Average Loss: {total_loss/max(total_tokens, 1):.4f}")
+        print("\nSample Translations:")
+        for i, (src, trans, ref) in enumerate(sample_translations, 1):
+            print(f"\nExample {i}:")
+            print(f"Source:     {src}")
+            print(f"Generated:  {trans}")
+            print(f"Reference:  {ref}")
+        print("="*50 + "\n")
     
     # Log to tensorboard
     writer.add_scalar('val/loss', total_loss/max(total_tokens, 1), global_step)
