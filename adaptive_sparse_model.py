@@ -3,7 +3,7 @@ import torch.nn as nn
 import math
 import torch.nn.functional as F
 from config import get_config
-from entmax import entmax15, entmax_bisect
+from entmax import entmax15, entmax_bisect, sparsemax
 
 # input embeddings are created to convert the original sentences into a vector of 512 dimension
 # vocab size is the number of unique tokens
@@ -108,6 +108,8 @@ class MultiHeadAttentionBlock(nn.Module):
         # Apply attention mechanism
         if self.attn_type == "softmax":
             attn_probs = F.softmax(attn_scores, dim=-1)
+        elif self.attn_type == "sparsemax":
+            attn_probs = sparsemax(attn_scores, dim=-1)
         elif self.attn_type == "entmax15":
             attn_probs = entmax15(attn_scores, dim=-1)
         elif self.attn_type == "entmax_alpha":
@@ -397,8 +399,13 @@ def build_adaptive_sparse_transformer(
     h: int,
     dropout: float,
     d_ff: int,
-    attn_type: str = "entmax_alpha", 
+    attn_type: str = "entmax_alpha",  # Now accepts "sparsemax" as well
 ) -> Transformer:
+    # Validate attention type
+    valid_attn_types = ["softmax", "sparsemax", "entmax15", "entmax_alpha"]
+    if attn_type not in valid_attn_types:
+        raise ValueError(f"attn_type must be one of {valid_attn_types}")
+    
     # create the embedding layers
     src_embed = InputEmbeddings(d_model, src_vocab_size)
     tgt_embed = InputEmbeddings(d_model, tgt_vocab_size)
