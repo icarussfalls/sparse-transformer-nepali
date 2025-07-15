@@ -2,8 +2,8 @@ from model import build_transformer
 from sparse_model import build_sparse_transformer
 from adaptive_sparse_model import build_adaptive_sparse_transformer
 from dataset import BilingualDataset, causal_mask
-from config import get_config, get_weights_file_path, latest_weight_file_path
-from visualization import *
+from config import get_config, get_weights_file_path, latest_weight_file_path, auto_configure_paths
+from utils import *
 
 import torch
 import torch.nn as nn
@@ -252,21 +252,6 @@ def get_ds(config):
     return train_dataloader, val_dataloader, tokenizer_src, tokenizer_tgt
 
 
-def get_model(config, vocab_src_len, vocab_tgt_len):
-    # (src_vocab_size: int, tgt_vocab_size: int, src_seq_len: int, tgt_seq_len: int, d_model: int, N: int, h: int, dropout: float, d_ff: int = None
-    if config['use_sparse']:
-        print('building sparse transformers')
-        model = build_sparse_transformer(vocab_src_len, vocab_tgt_len, src_seq_len=config['seq_len'], tgt_seq_len=config['seq_len'], d_model = config['d_model'], N = config['N'], h=config['h'], dropout=config['dropout'], d_ff=config['d_ff'], block_size=config['sparse_block_size'], stride=config['sparse_stride'])
-        return model
-    if config['use_adaptive_sparse']:
-        print('building adaptive sparse model')
-        model = build_adaptive_sparse_transformer(vocab_src_len, vocab_tgt_len, src_seq_len=config['seq_len'], tgt_seq_len=config['seq_len'], d_model = config['d_model'], N = config['N'], h=config['h'], dropout=config['dropout'], d_ff=config['d_ff'], attn_type=config['attn_type'])
-        return model
-    model = build_transformer(vocab_src_len, vocab_tgt_len, src_seq_len=config['seq_len'], tgt_seq_len=config['seq_len'], d_model = config['d_model'], N = config['N'], h=config['h'], dropout=config['dropout'], d_ff=config['d_ff'])
-    print('building vanilla transformers')
-    return model
-
-
 def run_validation(model, val_dataloader, tokenizer_src, tokenizer_tgt, seq_len, device, print_msg, global_step, writer, loss_fn):
     model.eval()
     total_loss = 0
@@ -410,7 +395,12 @@ def run_validation(model, val_dataloader, tokenizer_src, tokenizer_tgt, seq_len,
     
     model.train()
     return total_loss/max(total_tokens, 1)
+
 def train_model(config, model=None, train_dataloader=None, val_dataloader=None, tokenizer_src=None, tokenizer_tgt=None):
+    
+    # lets auto configure the path 
+    config = auto_configure_paths(config)
+    
     # Get model and data if not provided (for non-distributed training)
     if model is None or train_dataloader is None:
         train_dataloader, val_dataloader, tokenizer_src, tokenizer_tgt = get_ds(config)
@@ -425,7 +415,7 @@ def train_model(config, model=None, train_dataloader=None, val_dataloader=None, 
     
     # Only main process creates directories and initializes tensorboard
     if is_main_process:
-        Path(f"{config['data_source']}_{config['model_folder']}").mkdir(parents=True, exist_ok=True)
+        Path(config['model_folder']).mkdir(parents=True, exist_ok=True)
         writer = SummaryWriter(config['experiment_name'])
     else:
         writer = None

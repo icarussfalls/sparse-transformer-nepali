@@ -190,6 +190,7 @@ class EncoderBlock(nn.Module):
         self.residual_connections = nn.ModuleList([ResidualConnection(features, dropout) for _ in range(2)])
 
     def forward(self, x, src_mask):
+        # Store attention weights in self.self_attention_block.last_attention_weights
         x = self.residual_connections[0](x, lambda x: self.self_attention_block(x, x, x, src_mask))
         x = self.residual_connections[1](x, self.feed_forward_block)
         return x
@@ -216,10 +217,10 @@ class DecoderBlock(nn.Module):
         self.residual_connection = nn.ModuleList([ResidualConnection(features, dropout) for _ in range(3)])
 
     def forward(self, x, encoder_output, src_mask, tgt_mask):
+        # Both self-attention and cross-attention weights will be stored
         x = self.residual_connection[0](x, lambda x: self.self_attention_block(x, x, x, tgt_mask))
         x = self.residual_connection[1](x, lambda x: self.cross_attention_block(x, encoder_output, encoder_output, src_mask))
         x = self.residual_connection[2](x, self.feed_forward_block)
-        # add and norm not applied here at output which is done in decoder class
         return x
     
 class Decoder(nn.Module):
@@ -300,6 +301,90 @@ class Transformer(nn.Module):
     def gradient_checkpointing_disable(self):
         """Disable gradient checkpointing"""
         self.gradient_checkpointing = False
+
+    def translate_with_attention(self, src, src_mask, tokenizer_src, tokenizer_tgt, max_len=100):
+        """
+        Translate text and return attention weights for visualization
+        """
+        # Initialize storage for attention weights
+        encoder_attention_maps = []
+        decoder_self_attention_maps = []
+        decoder_cross_attention_maps = []
+        
+        # Encode source sequence and collect encoder attention
+        src_embedded = self.src_pos(self.src_embed(src))
+        
+        # Run through encoder collecting attention weights
+        encoder_output = src_embedded
+        for layer in self.encoder.layers:
+            encoder_output = layer(encoder_output, src_mask)
+            # Store encoder self-attention weights
+            encoder_attention_maps.append(layer.self_attention_block.last_attention_weights)
+        
+        encoder_output = self.encoder.norm(encoder_output)
+        
+        # Initialize translation with SOS token
+        sos_idx = tokenizer_tgt.token_to_id('[SOS]')
+        eos_idx = tokenizer_tgt.token_to_id('[EOS]')
+        
+        # Start with SOS token
+        decoder_input = torch.ones(1, 1).fill_(sos_idx).type_as(src).to(src.device)
+        
+        # Greedy decode
+        for i in range(max_len):
+            # Create mask for target
+            decoder_mask = torch.triu(
+                torch.ones((1, decoder_input.size(1), decoder_input.size(1))), 
+                diagonal=1
+            ).type(torch.bool).to(src.device)
+            
+            # Decode step
+            decoder_embedded = self.tgt_pos(self.tgt_embed(decoder_input))
+            decoder_output = decoder_embedded
+            
+            # Store attention maps for this step
+            step_self_attention = []
+            step_cross_attention = []
+            
+            for layer in self.decoder.layers:
+                # Get self-attention weights
+                _ = layer.self_attention_block(
+                    decoder_output, decoder_output, decoder_output, decoder_mask
+                )
+                step_self_attention.append(layer.self_attention_block.last_attention_weights)
+                
+                # Get cross-attention weights
+                _ = layer.cross_attention_block(
+                    decoder_output, encoder_output, encoder_output, src_mask
+                )
+                step_cross_attention.append(layer.cross_attention_block.last_attention_weights)
+                
+                # Full forward pass
+                decoder_output = layer(decoder_output, encoder_output, src_mask, decoder_mask)
+            
+            decoder_output = self.decoder.norm(decoder_output)
+            
+            # Store attention maps
+            decoder_self_attention_maps.append(step_self_attention)
+            decoder_cross_attention_maps.append(step_cross_attention)
+            
+            # Project and get next token
+            proj_output = self.projection_layer(decoder_output)
+            next_word = proj_output[:, -1].argmax(dim=1, keepdim=True)
+            decoder_input = torch.cat([decoder_input, next_word], dim=1)
+            
+            # Stop if EOS token
+            if next_word.item() == eos_idx:
+                break
+        
+        # Organize attention maps
+        attention_maps = {
+            'encoder': encoder_attention_maps,
+            'decoder_self': decoder_self_attention_maps,
+            'decoder_cross': decoder_cross_attention_maps
+        }
+        
+        return decoder_input, attention_maps
 
 # lets build the full transformers now
 def build_adaptive_sparse_transformer(

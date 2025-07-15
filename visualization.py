@@ -3,150 +3,152 @@ import matplotlib.pyplot as plt
 import seaborn as sns
 from pathlib import Path
 import numpy as np
+from utils import get_model
+from train import get_ds
+from config import get_config, auto_configure_paths
 
+def analyze_sparsity(model_type='adaptive_sparse', checkpoint_epoch=14):
+    """Analyzes and visualizes attention sparsity patterns"""
+    
+    # Setup configuration
+    config = get_config()
+    if model_type == 'adaptive_sparse':
+        config['use_sparse'] = False
+        config['use_adaptive_sparse'] = True
+        config['attn_type'] = "sparsemax"  # or "entmax15"
+    
+    # Auto-configure paths and load model
+    config = auto_configure_paths(config)
+    config['preload'] = str(checkpoint_epoch)
+    
+    # Load data and model
+    train_dataloader, val_dataloader, tokenizer_src, tokenizer_tgt = get_ds(config)
+    model = get_model(config, tokenizer_src.get_vocab_size(), tokenizer_tgt.get_vocab_size())
+    
+    # Create output directory
+    output_dir = Path(f"sparsity_analysis/{model_type}")
+    output_dir.mkdir(parents=True, exist_ok=True)
+    
+    # Sample sentences for analysis
+    sample_texts = [
+        "How are you doing today?",
+        "Nepal is a beautiful country.",
+        "The quick brown fox jumps over the lazy dog."
+    ]
+    
+    # Analysis metrics
+    sparsity_stats = {
+        'encoder': [],
+        'decoder_self': [],
+        'decoder_cross': []
+    }
+    
+    def compute_sparsity(attention_weights):
+        """Compute sparsity metrics for attention weights"""
+        # Consider weights < 1e-10 as zero (numerical threshold)
+        zero_mask = (attention_weights.abs() < 1e-10)
+        sparsity = zero_mask.float().mean().item()
+        active_heads = (~zero_mask).any(dim=-1).any(dim=-1).float().mean().item()
+        return {
+            'sparsity': sparsity,
+            'active_heads': active_heads,
+            'max_value': attention_weights.max().item(),
+            'entropy': -(attention_weights * torch.log(attention_weights + 1e-10)).sum(dim=-1).mean().item()
+        }
+    
+    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+    model = model.to(device)
+    model.eval()
+    
+    with torch.no_grad():
+        for i, text in enumerate(sample_texts):
+            # Prepare input
+            encoder_input = tokenizer_src.encode(text).ids
+            encoder_input = torch.tensor([encoder_input], device=device)
+            encoder_mask = (encoder_input != tokenizer_src.token_to_id("[PAD]")).unsqueeze(1).to(device)
+            
+            # Get attention weights
+            translation, attention_maps = model.translate_with_attention(
+                encoder_input, encoder_mask, tokenizer_src, tokenizer_tgt
+            )
+            
+            # Analyze encoder self-attention
+            for layer_idx, layer_attn in enumerate(attention_maps['encoder']):
+                stats = compute_sparsity(layer_attn)
+                sparsity_stats['encoder'].append({
+                    'layer': layer_idx,
+                    'sample': i,
+                    **stats
+                })
+                
+                # Visualize sparsity pattern
+                plt.figure(figsize=(15, 5))
+                
+                # Plot 1: Attention heatmap
+                plt.subplot(1, 2, 1)
+                sns.heatmap(layer_attn[0, 0].cpu().numpy(), cmap='viridis')
+                plt.title(f'Layer {layer_idx} Attention Pattern')
+                
+                # Plot 2: Sparsity histogram
+                plt.subplot(1, 2, 2)
+                plt.hist(layer_attn.cpu().numpy().flatten(), bins=50)
+                plt.title(f'Attention Weight Distribution\nSparsity: {stats["sparsity"]:.2%}')
+                
+                plt.tight_layout()
+                plt.savefig(output_dir / f'sample{i}_layer{layer_idx}_sparsity.png')
+                plt.close()
+            
+            # Save sparsity statistics
+            with open(output_dir / f'sample{i}_stats.txt', 'w') as f:
+                f.write(f"Input text: {text}\n\n")
+                f.write("Encoder Self-Attention Statistics:\n")
+                for stat in sparsity_stats['encoder']:
+                    if stat['sample'] == i:
+                        f.write(f"Layer {stat['layer']}:\n")
+                        f.write(f"  Sparsity: {stat['sparsity']:.2%}\n")
+                        f.write(f"  Active heads: {stat['active_heads']:.2%}\n")
+                        f.write(f"  Max attention value: {stat['max_value']:.4f}\n")
+                        f.write(f"  Attention entropy: {stat['entropy']:.4f}\n\n")
+    
+            # Analyze decoder cross-attention
+            if 'decoder_cross' in attention_maps:
+                for step_idx, step_attns in enumerate(attention_maps['decoder_cross']):
+                    for layer_idx, layer_attn in enumerate(step_attns):
+                        stats = compute_sparsity(layer_attn)
+                        sparsity_stats['decoder_cross'].append({
+                            'layer': layer_idx,
+                            'step': step_idx,
+                            'sample': i,
+                            **stats
+                        })
+                        
+                        # Visualize decoder attention
+                        plt.figure(figsize=(15, 5))
+                        
+                        # Plot 1: Cross-attention heatmap
+                        plt.subplot(1, 2, 1)
+                        sns.heatmap(layer_attn[0, 0].cpu().numpy(), cmap='viridis')
+                        plt.title(f'Decoder Layer {layer_idx} Step {step_idx} Cross-Attention')
+                        
+                        # Plot 2: Sparsity histogram
+                        plt.subplot(1, 2, 2)
+                        plt.hist(layer_attn.cpu().numpy().flatten(), bins=50)
+                        plt.title(f'Cross-Attention Distribution\nSparsity: {stats["sparsity"]:.2%}')
+                        
+                        plt.tight_layout()
+                        plt.savefig(output_dir / f'sample{i}_decoder_layer{layer_idx}_step{step_idx}_cross_attention.png')
+                        plt.close()
 
-# function to visualize the alpha values learned
-def visualize_alpha_values(model, save_dir='visualizations'):
-    """visualize alpha values for adaptive sparse attention"""
-    Path(save_dir).mkdir(parents=True, exist_ok=True)
-    
-    alpha_values = []
-    layer_names = []
-    
-    # Fix: Handle module names properly
-    for name, module in model.named_modules():
-        if hasattr(module, 'alpha') and module.alpha is not None:
-            alpha_values.append(module.alpha.detach().cpu().numpy())
-            # Fix: Extract layer number properly
-            if 'encoder' in name and 'layers' in name:
-                try:
-                    # Extract layer number from name like 'encoder.layers.0.self_attention_block'
-                    layer_num = name.split('.layers.')[1].split('.')[0]
-                    layer_names.append(f'Encoder Layer {layer_num}')
-                except (IndexError, ValueError):
-                    layer_names.append(name)  # Fallback to full name
-            elif 'decoder' in name and 'layers' in name:
-                try:
-                    layer_num = name.split('.layers.')[1].split('.')[0]
-                    layer_names.append(f'Decoder Layer {layer_num}')
-                except (IndexError, ValueError):
-                    layer_names.append(name)
-            else:
-                layer_names.append(name)
-    
-    if not alpha_values:
-        print("No alpha values found in model")
-        return
-    
-    # Plot alpha values
-    plt.figure(figsize=(12, 8))
-    for i, (alpha, name) in enumerate(zip(alpha_values, layer_names)):
-        plt.subplot(2, (len(alpha_values) + 1) // 2, i + 1)
-        plt.hist(alpha.flatten(), bins=50, alpha=0.7)
-        plt.title(f'{name}\nAlpha Distribution')
-        plt.xlabel('Alpha Value')
-        plt.ylabel('Frequency')
-    
-    plt.tight_layout()
-    plt.savefig(f'{save_dir}/alpha_distributions.png')
+    # Plot overall sparsity patterns
+    plt.figure(figsize=(10, 6))
+    sparsities = [s['sparsity'] for s in sparsity_stats['encoder']]
+    layers = [s['layer'] for s in sparsity_stats['encoder']]
+    sns.boxplot(x=layers, y=sparsities)
+    plt.xlabel('Layer')
+    plt.ylabel('Sparsity Ratio')
+    plt.title('Attention Sparsity Across Layers')
+    plt.savefig(output_dir / 'overall_sparsity_pattern.png')
     plt.close()
 
-def visualize_attention_patterns(model, tokenizer_src, tokenizer_tgt, sample_text, save_dir='visualizations'):
-    """Visualize attention patterns using stored weights"""
-    Path(save_dir).mkdir(parents=True, exist_ok=True)
-    model.eval()
-    device = next(model.parameters()).device
-
-    # Use short sample text
-    sample_text = "Hello world"
-    tokens = tokenizer_src.encode(sample_text).ids[:8]  # Limit to 8 tokens
-    
-    # Ensure minimum length
-    pad_token = tokenizer_src.token_to_id('[PAD]') or 0
-    while len(tokens) < 4:
-        tokens.append(pad_token)
-    
-    input_ids = torch.tensor([tokens]).to(device)
-    seq_len = input_ids.size(1)
-
-    # Create masks
-    encoder_mask = torch.ones(1, 1, 1, seq_len).to(device)
-    decoder_mask = torch.triu(torch.ones(seq_len, seq_len), diagonal=1).to(device)
-    decoder_mask = (decoder_mask == 0).float().unsqueeze(0).unsqueeze(0)
-
-    # Forward pass to populate attention weights
-    with torch.no_grad():
-        try:
-            model(input_ids, input_ids, encoder_mask, decoder_mask)
-        except Exception as e:
-            print(f"Forward pass failed: {e}")
-            return
-
-    # Extract attention weights from modules
-    layer_idx = 0
-    for name, module in model.named_modules():
-        if hasattr(module, 'last_attention_weights') and module.last_attention_weights is not None:
-            attn_weights = module.last_attention_weights.cpu()
-            
-            if attn_weights.dim() == 4:  # (B, h, L, L)
-                attn_weights = attn_weights[0]  # Remove batch dimension: (h, L, L)
-            
-            # Plot first 4 heads
-            n_heads = min(attn_weights.size(0), 4)
-            fig, axes = plt.subplots(2, 2, figsize=(12, 10))
-            axes = axes.flatten()
-            
-            for head_idx in range(n_heads):
-                attn_matrix = attn_weights[head_idx].numpy()
-                
-                sns.heatmap(attn_matrix, 
-                           ax=axes[head_idx], 
-                           cmap='Blues',
-                           cbar=True,
-                           square=True,
-                           xticklabels=range(seq_len),
-                           yticklabels=range(seq_len))
-                axes[head_idx].set_title(f'Head {head_idx}')
-                axes[head_idx].set_xlabel('Key Position')
-                axes[head_idx].set_ylabel('Query Position')
-            
-            # Hide unused subplots
-            for i in range(n_heads, 4):
-                axes[i].set_visible(False)
-            
-            plt.suptitle(f'Layer {layer_idx} Attention Patterns')
-            plt.tight_layout()
-            plt.savefig(f'{save_dir}/attention_layer_{layer_idx}.png', dpi=150, bbox_inches='tight')
-            plt.close()
-            
-            layer_idx += 1
-            if layer_idx >= 2:  # Only first 2 layers
-                break
-    
-    print(f"Attention visualization saved to {save_dir}/")
-
-def log_visualizations(model, tokenizer_src, tokenizer_tgt, global_step, save_dir='visualizations'):
-    """this logs the visualizations during training"""
-    try:
-        if hasattr(model, 'module'):
-            model_unwrapped = model.module
-        else:
-            model_unwrapped = model
-        
-        step_dir = f'{save_dir}/step_{global_step}'
-        
-        # Alpha visualization
-        print("Generating alpha visualizations...")
-        visualize_alpha_values(model_unwrapped, step_dir)
-        
-        # Attention visualization (now fixed!)
-        print("Generating attention visualizations...")
-        visualize_attention_patterns(model_unwrapped, tokenizer_src, tokenizer_tgt, 
-                                   "Hello world", step_dir)
-        
-        print(f"Visualizations saved to {step_dir}/")
-        
-    except Exception as e:
-        print(f"Error generating visualizations: {e}")
-        import traceback
-        traceback.print_exc()
+if __name__ == "__main__":
+    analyze_sparsity()
